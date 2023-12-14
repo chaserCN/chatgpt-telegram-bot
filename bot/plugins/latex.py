@@ -41,17 +41,11 @@ class LatexConverterPlugin(Plugin):
 
         try:
             resp = urllib.request.urlopen(url)
-            body = resp.read()
+            svg_data = resp.read()
 
-            png_data = self.convert2png(body)
+            png_data = self.convert2png(svg_data)
 
-            if not os.path.exists("uploads/latex"):
-                os.makedirs("uploads/latex")
-            image_file_path = os.path.join("uploads/latex", f"{self.generate_random_string(15)}.png")
-
-            with open(image_file_path, 'wb') as file:
-                # Write the byte string to the file
-                file.write(png_data)
+            image_file_path = self.save_to_tmp_file(png_data)
 
             return {
                 'direct_result': {
@@ -66,10 +60,19 @@ class LatexConverterPlugin(Plugin):
             return {'result': body if body else "Unable to convert LaTeX"}
 
         except Exception as e:
-            if 'image_file_path' in locals():
-                os.remove(image_file_path)
-
             return {'result': f"Unable to convert LaTeX: {e}"}
+
+    def save_to_tmp_file(self, data):
+        if not os.path.exists("uploads/latex"):
+            os.makedirs("uploads/latex")
+
+        image_file_path = os.path.join("uploads/latex", f"{self.generate_random_string(15)}.png")
+
+        with open(image_file_path, 'wb') as file:
+            # Write the byte string to the file
+            file.write(data)
+
+        return image_file_path
 
     def generate_random_string(self, length):
         characters = string.ascii_letters + string.digits
