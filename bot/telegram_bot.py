@@ -465,12 +465,19 @@ class ChatGPTTelegramBot:
             if self.config['ignore_group_vision']:
                 logging.info(f'Vision coming from group chat, ignoring...')
                 return
-            else:
-                trigger_keyword = self.config['group_trigger_keyword']
-                if (prompt is None and trigger_keyword != '') or \
-                   (prompt is not None and not prompt.lower().startswith(trigger_keyword.lower())):
-                    logging.info(f'Vision coming from group chat with wrong keyword, ignoring...')
-                    return
+
+            ignore_keyword = self.config['group_ignore_keyword']
+            if (prompt and
+                    ignore_keyword and
+                    (prompt == ignore_keyword or prompt.lower().startswith(ignore_keyword.lower() + " "))):
+                logging.info(f'Vision coming from group chat, starts with the ignore keyword, ignoring...')
+                return
+
+            trigger_keyword = self.config['group_trigger_keyword']
+            if (prompt is None and trigger_keyword != '') or \
+               (prompt is not None and not prompt.lower().startswith(trigger_keyword.lower())):
+                logging.info(f'Vision coming from group chat with wrong keyword, ignoring...')
+                return
         
         image = update.message.effective_attachment[-1]
         
@@ -661,9 +668,18 @@ class ChatGPTTelegramBot:
         self.last_message[chat_id] = prompt
 
         if is_group_chat(update):
+            ignore_keyword = self.config['group_ignore_keyword']
             trigger_keyword = self.config['group_trigger_keyword']
 
-            if prompt.lower().startswith(trigger_keyword.lower()) or update.message.text.lower().startswith('/chat'):
+            full_prompt = update.message.text.lower().strip()
+
+            if (full_prompt and
+                    ignore_keyword and
+                    (full_prompt == ignore_keyword or full_prompt.startswith(ignore_keyword + " "))):
+                logging.info('Message starts with the ignore keyword, ignoring...')
+                return
+
+            if prompt.lower().startswith(trigger_keyword.lower()) or full_prompt.startswith('/chat'):
                 if prompt.lower().startswith(trigger_keyword.lower()):
                     prompt = prompt[len(trigger_keyword):].strip()
 
