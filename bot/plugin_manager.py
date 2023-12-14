@@ -69,6 +69,16 @@ class PluginManager:
             return ''
         return plugin.get_source_name()
 
+    def get_plugin_source_name_with_icon(self, function_name) -> str:
+        """
+        Return the icon and source name of the plugin
+        """
+        plugin = self.__get_plugin_by_function_name(function_name)
+        if not plugin:
+            return ''
+        return plugin.get_icon() + " " + plugin.get_source_name()
+
+
     def __get_plugin_by_function_name(self, function_name):
         return next((plugin for plugin in self.plugins
                      if function_name in map(lambda spec: spec.get('name'), plugin.get_spec())), None)

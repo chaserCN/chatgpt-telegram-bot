@@ -14,6 +14,13 @@ class Plugin(ABC):
         """
         pass
 
+    @staticmethod
+    def default_icon() -> str:
+        return "📡"
+
+    def get_icon(self) -> str:
+        return Plugin.default_icon()
+
     @abstractmethod
     def get_spec(self) -> [Dict]:
         """

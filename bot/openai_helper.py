@@ -17,6 +17,7 @@ from PIL import Image
 
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
+from plugins.plugin import Plugin
 from utils import is_direct_result, encode_image, decode_image
 from plugin_manager import PluginManager
 
@@ -152,16 +153,16 @@ class OpenAIHelper:
 
         bot_language = self.config['bot_language']
         show_plugins_used = len(plugins_used) > 0 and self.config['show_plugins_used']
-        plugin_names = tuple(self.plugin_manager.get_plugin_source_name(plugin) for plugin in plugins_used)
+        plugin_names = tuple(self.plugin_manager.get_plugin_source_name_with_icon(plugin) for plugin in plugins_used)
         if self.config['show_usage']:
             answer += "\n\n---\n" \
                       f"💰 {str(response.usage.total_tokens)} {localized_text('stats_tokens', bot_language)}" \
                       f" ({str(response.usage.prompt_tokens)} {localized_text('prompt', bot_language)}," \
                       f" {str(response.usage.completion_tokens)} {localized_text('completion', bot_language)})"
             if show_plugins_used:
-                answer += f"\n📡 {', '.join(plugin_names)}"
+                answer += f"\n{', '.join(plugin_names)}"
         elif show_plugins_used:
-            answer += f"\n\n---\n📡 {', '.join(plugin_names)}"
+            answer += f"\n\n---\n{', '.join(plugin_names)}"
 
         return answer, response.usage.total_tokens
 
@@ -193,13 +194,13 @@ class OpenAIHelper:
         tokens_used = str(self.__count_tokens(self.conversations[chat_id]))
 
         show_plugins_used = len(plugins_used) > 0 and self.config['show_plugins_used']
-        plugin_names = tuple(self.plugin_manager.get_plugin_source_name(plugin) for plugin in plugins_used)
+        plugin_names = tuple(self.plugin_manager.get_plugin_source_name_with_icon(plugin) for plugin in plugins_used)
         if self.config['show_usage']:
             answer += f"\n\n---\n💰 {tokens_used} {localized_text('stats_tokens', self.config['bot_language'])}"
             if show_plugins_used:
-                answer += f"\n📡 {', '.join(plugin_names)}"
+                answer += f"\n{', '.join(plugin_names)}"
         elif show_plugins_used:
-            answer += f"\n\n---\n📡 {', '.join(plugin_names)}"
+            answer += f"\n\n---\n{', '.join(plugin_names)}"
 
         yield answer, tokens_used
 
@@ -506,16 +507,16 @@ class OpenAIHelper:
         bot_language = self.config['bot_language']
         # Plugins are not enabled either
         # show_plugins_used = len(plugins_used) > 0 and self.config['show_plugins_used']
-        # plugin_names = tuple(self.plugin_manager.get_plugin_source_name(plugin) for plugin in plugins_used)
+        # plugin_names = tuple(self.plugin_manager.get_plugin_source_name_with_icon(plugin) for plugin in plugins_used)
         if self.config['show_usage']:
             answer += "\n\n---\n" \
                       f"💰 {str(response.usage.total_tokens)} {localized_text('stats_tokens', bot_language)}" \
                       f" ({str(response.usage.prompt_tokens)} {localized_text('prompt', bot_language)}," \
                       f" {str(response.usage.completion_tokens)} {localized_text('completion', bot_language)})"
             # if show_plugins_used:
-            #     answer += f"\n📡 {', '.join(plugin_names)}"
+            #     answer += f"\n{', '.join(plugin_names)}"
         # elif show_plugins_used:
-        #     answer += f"\n\n---\n📡 {', '.join(plugin_names)}"
+        #     answer += f"\n\n---\n{', '.join(plugin_names)}"
 
         return answer, response.usage.total_tokens
 
@@ -552,13 +553,13 @@ class OpenAIHelper:
         tokens_used = str(self.__count_tokens(self.conversations[chat_id]))
 
         #show_plugins_used = len(plugins_used) > 0 and self.config['show_plugins_used']
-        #plugin_names = tuple(self.plugin_manager.get_plugin_source_name(plugin) for plugin in plugins_used)
+        #plugin_names = tuple(self.plugin_manager.get_plugin_source_name_with_icon(plugin) for plugin in plugins_used)
         if self.config['show_usage']:
             answer += f"\n\n---\n💰 {tokens_used} {localized_text('stats_tokens', self.config['bot_language'])}"
         #     if show_plugins_used:
-        #         answer += f"\n📡 {', '.join(plugin_names)}"
+        #         answer += f"\n{', '.join(plugin_names)}"
         # elif show_plugins_used:
-        #     answer += f"\n\n---\n📡 {', '.join(plugin_names)}"
+        #     answer += f"\n\n---\n{', '.join(plugin_names)}"
 
         yield answer, tokens_used
 

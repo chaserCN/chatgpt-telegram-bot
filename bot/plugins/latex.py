@@ -18,6 +18,9 @@ class LatexConverterPlugin(Plugin):
     def get_source_name(self) -> str:
         return "LatexConverter"
 
+    def get_icon(self) -> str:
+        return "🖌️"
+
     def get_spec(self) -> [Dict]:
         return [{
             "name": "transform_latex_to_image",

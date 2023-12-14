@@ -23,6 +23,9 @@ class WolframAlphaPlugin(Plugin):
     def get_source_name(self) -> str:
         return "WolframAlpha"
 
+    def get_icon(self) -> str:
+        return "🧮"
+
     def get_spec(self) -> [Dict]:
         return [{
             "name": "answer_with_wolfram_alpha",
