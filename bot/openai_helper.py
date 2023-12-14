@@ -159,9 +159,9 @@ class OpenAIHelper:
                       f" ({str(response.usage.prompt_tokens)} {localized_text('prompt', bot_language)}," \
                       f" {str(response.usage.completion_tokens)} {localized_text('completion', bot_language)})"
             if show_plugins_used:
-                answer += f"\n🔌 {', '.join(plugin_names)}"
+                answer += f"\n📡 {', '.join(plugin_names)}"
         elif show_plugins_used:
-            answer += f"\n\n---\n🔌 {', '.join(plugin_names)}"
+            answer += f"\n\n---\n📡 {', '.join(plugin_names)}"
 
         return answer, response.usage.total_tokens
 
@@ -197,9 +197,9 @@ class OpenAIHelper:
         if self.config['show_usage']:
             answer += f"\n\n---\n💰 {tokens_used} {localized_text('stats_tokens', self.config['bot_language'])}"
             if show_plugins_used:
-                answer += f"\n🔌 {', '.join(plugin_names)}"
+                answer += f"\n📡 {', '.join(plugin_names)}"
         elif show_plugins_used:
-            answer += f"\n\n---\n🔌 {', '.join(plugin_names)}"
+            answer += f"\n\n---\n📡 {', '.join(plugin_names)}"
 
         yield answer, tokens_used
 
@@ -513,9 +513,9 @@ class OpenAIHelper:
                       f" ({str(response.usage.prompt_tokens)} {localized_text('prompt', bot_language)}," \
                       f" {str(response.usage.completion_tokens)} {localized_text('completion', bot_language)})"
             # if show_plugins_used:
-            #     answer += f"\n🔌 {', '.join(plugin_names)}"
+            #     answer += f"\n📡 {', '.join(plugin_names)}"
         # elif show_plugins_used:
-        #     answer += f"\n\n---\n🔌 {', '.join(plugin_names)}"
+        #     answer += f"\n\n---\n📡 {', '.join(plugin_names)}"
 
         return answer, response.usage.total_tokens
 
@@ -556,9 +556,9 @@ class OpenAIHelper:
         if self.config['show_usage']:
             answer += f"\n\n---\n💰 {tokens_used} {localized_text('stats_tokens', self.config['bot_language'])}"
         #     if show_plugins_used:
-        #         answer += f"\n🔌 {', '.join(plugin_names)}"
+        #         answer += f"\n📡 {', '.join(plugin_names)}"
         # elif show_plugins_used:
-        #     answer += f"\n\n---\n🔌 {', '.join(plugin_names)}"
+        #     answer += f"\n\n---\n📡 {', '.join(plugin_names)}"
 
         yield answer, tokens_used
 

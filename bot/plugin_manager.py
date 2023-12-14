@@ -1,5 +1,6 @@
 import json
 
+from plugins.latex import LatexConverterPlugin
 from plugins.gtts_text_to_speech import GTTSTextToSpeech
 from plugins.auto_tts import AutoTextToSpeech
 from plugins.dice import DicePlugin
@@ -40,6 +41,7 @@ class PluginManager:
             'auto_tts': AutoTextToSpeech,
             'whois': WhoisPlugin,
             'webshot': WebshotPlugin,
+            'latex2image': LatexConverterPlugin,
         }
         self.plugins = [plugin_mapping[plugin]() for plugin in enabled_plugins if plugin in plugin_mapping]
 

@@ -1,5 +1,9 @@
 import os
+import urllib
+import urllib.parse
+import urllib.request
 from typing import Dict
+from urllib.error import HTTPError
 
 import wolframalpha
 
@@ -33,16 +37,18 @@ class WolframAlphaPlugin(Plugin):
         }]
 
     async def execute(self, function_name, helper, **kwargs) -> Dict:
-        client = wolframalpha.Client(self.app_id)
-        res = client.query(kwargs['query'])
+        data = dict(
+            input=kwargs['query'],
+            appid=self.app_id,
+        )
+
+        query = urllib.parse.urlencode(data)
+        url = 'https://www.wolframalpha.com/api/v1/llm-api?' + query
+
         try:
-            assumption = next(res.pods).text
-            answer = next(res.results).text
-        except StopIteration:
-            return {'answer': 'Wolfram Alpha wasn\'t able to answer it'}
+            resp = urllib.request.urlopen(url)
+            body = resp.read()
+        except HTTPError as e:
+            body = e.read()
 
-        if answer is None or answer == "":
-            return {'answer': 'No good Wolfram Alpha Result was found'}
-        else:
-            return {'assumption': assumption, 'answer': answer}
-
+        return {'answer': body}

@@ -6,6 +6,7 @@ ENV PYTHONFAULTHANDLER=1 \
      PIP_DISABLE_PIP_VERSION_CHECK=on
 
 RUN apk --no-cache add ffmpeg
+RUN apk --no-cache add cairo
 
 WORKDIR /app
 COPY . .
