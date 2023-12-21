@@ -13,4 +13,4 @@ gtts~=2.3.2
 whois~=0.9.27
 Pillow~=10.1.0
 cairosvg~=2.7.1
-
+imgkit~=1.2.3
