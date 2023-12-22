@@ -1,5 +1,6 @@
 import json
 
+from json_repair import repair_json
 from plugins.latex import LatexConverterPlugin
 from plugins.html2image import Html2ImagePlugin
 from plugins.gtts_text_to_speech import GTTSTextToSpeech
@@ -60,7 +61,9 @@ class PluginManager:
         plugin = self.__get_plugin_by_function_name(function_name)
         if not plugin:
             return json.dumps({'error': f'Function {function_name} not found'})
-        return json.dumps(await plugin.execute(function_name, helper, **json.loads(arguments)), default=str)
+
+        answer = await plugin.execute(function_name, helper, **repair_json(arguments, return_objects=True))
+        return json.dumps(answer, default=str)
 
     def get_plugin_source_name(self, function_name) -> str:
         """
