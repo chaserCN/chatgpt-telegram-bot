@@ -101,6 +101,12 @@ async def wrap_with_indicator(update: Update, context: CallbackContext, coroutin
         except asyncio.TimeoutError:
             pass
 
+async def send_action_periodically(update: Update, context: CallbackContext, chat_action: constants.ChatAction = ""):
+    while True:
+        context.application.create_task(
+            update.effective_chat.send_action(chat_action, message_thread_id=get_thread_id(update))
+        )
+        await asyncio.sleep(4.5)
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int | None,
                                   message_id: str, text: str, markdown: bool = True, is_inline: bool = False):

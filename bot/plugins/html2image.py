@@ -1,7 +1,8 @@
 import os, random, string
 import imgkit
 from typing import Dict
-from .plugin import Plugin
+from .plugin import Plugin, generate_random_string
+
 
 class Html2ImagePlugin(Plugin):
     """
@@ -43,9 +44,4 @@ class Html2ImagePlugin(Plugin):
         if not os.path.exists("uploads/html"):
             os.makedirs("uploads/html")
 
-        return os.path.join("uploads/html", f"{self.generate_random_string(15)}.png")
-
-
-    def generate_random_string(self, length):
-        characters = string.ascii_letters + string.digits
-        return ''.join(random.choice(characters) for _ in range(length))
+        return os.path.join("uploads/html", f"{generate_random_string(15)}.png")

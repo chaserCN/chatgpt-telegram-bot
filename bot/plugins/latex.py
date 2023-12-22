@@ -7,8 +7,8 @@ from typing import Dict
 from urllib.error import HTTPError
 from cairosvg import svg2png
 from PIL import Image
+from .plugin import Plugin, generate_random_string
 
-from .plugin import Plugin
 
 class LatexConverterPlugin(Plugin):
     """
@@ -69,17 +69,13 @@ class LatexConverterPlugin(Plugin):
         if not os.path.exists("uploads/latex"):
             os.makedirs("uploads/latex")
 
-        image_file_path = os.path.join("uploads/latex", f"{self.generate_random_string(15)}.png")
+        image_file_path = os.path.join("uploads/latex", f"{generate_random_string(15)}.png")
 
         with open(image_file_path, 'wb') as file:
             # Write the byte string to the file
             file.write(data)
 
         return image_file_path
-
-    def generate_random_string(self, length):
-        characters = string.ascii_letters + string.digits
-        return ''.join(random.choice(characters) for _ in range(length))
 
     def convert2png(self, svg_data):
         image_data = svg2png(bytestring=svg_data)

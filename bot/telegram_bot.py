@@ -19,7 +19,7 @@ from PIL import Image
 from utils import is_group_chat, get_thread_id, message_text, wrap_with_indicator, split_into_chunks, \
     edit_message_with_retry, get_stream_cutoff_values, is_allowed, get_remaining_budget, is_admin, is_within_budget, \
     get_reply_to_message_id, add_chat_request_to_usage_tracker, error_handler, is_direct_result, handle_direct_result, \
-    cleanup_intermediate_files
+    cleanup_intermediate_files, send_action_periodically
 from openai_helper import OpenAIHelper, localized_text
 from usage_tracker import UsageTracker
 
@@ -694,91 +694,97 @@ class ChatGPTTelegramBot:
                     logging.warning('Message does not start with trigger keyword, ignoring...')
                     return
 
+        sending_task = context.application.create_task(
+            send_action_periodically(update, context, constants.ChatAction.TYPING)
+        )
+
         try:
             total_tokens = 0
 
             if self.config['stream']:
-                await update.effective_message.reply_chat_action(
-                    action=constants.ChatAction.TYPING,
-                    message_thread_id=get_thread_id(update)
-                )
+                async def _reply():
+                    nonlocal total_tokens
 
-                stream_response = self.openai.get_chat_response_stream(chat_id=chat_id, query=prompt)
-                i = 0
-                prev = ''
-                sent_message = None
-                backoff = 0
-                stream_chunk = 0
+                    stream_response = self.openai.get_chat_response_stream(chat_id=chat_id, query=prompt)
+                    i = 0
+                    prev = ''
+                    sent_message = None
+                    backoff = 0
+                    stream_chunk = 0
 
-                async for content, tokens in stream_response:
-                    if is_direct_result(content):
-                        return await handle_direct_result(self.config, update, content)
+                    async for content, tokens in stream_response:
+                        sending_task.cancel()
 
-                    if len(content.strip()) == 0:
-                        continue
+                        if is_direct_result(content):
+                            return await handle_direct_result(self.config, update, content)
 
-                    stream_chunks = split_into_chunks(content)
-                    if len(stream_chunks) > 1:
-                        content = stream_chunks[-1]
-                        if stream_chunk != len(stream_chunks) - 1:
-                            stream_chunk += 1
+                        if len(content.strip()) == 0:
+                            continue
+
+                        stream_chunks = split_into_chunks(content)
+                        if len(stream_chunks) > 1:
+                            content = stream_chunks[-1]
+                            if stream_chunk != len(stream_chunks) - 1:
+                                stream_chunk += 1
+                                try:
+                                    await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
+                                                                  stream_chunks[-2])
+                                except:
+                                    pass
+                                try:
+                                    sent_message = await update.effective_message.reply_text(
+                                        message_thread_id=get_thread_id(update),
+                                        text=content if len(content) > 0 else "..."
+                                    )
+                                except:
+                                    pass
+                                continue
+
+                        cutoff = get_stream_cutoff_values(update, content)
+                        cutoff += backoff
+
+                        if i == 0:
                             try:
-                                await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
-                                                              stream_chunks[-2])
-                            except:
-                                pass
-                            try:
+                                if sent_message is not None:
+                                    await context.bot.delete_message(chat_id=sent_message.chat_id,
+                                                                     message_id=sent_message.message_id)
                                 sent_message = await update.effective_message.reply_text(
                                     message_thread_id=get_thread_id(update),
-                                    text=content if len(content) > 0 else "..."
+                                    reply_to_message_id=get_reply_to_message_id(self.config, update),
+                                    text=content,
                                 )
                             except:
-                                pass
-                            continue
+                                continue
 
-                    cutoff = get_stream_cutoff_values(update, content)
-                    cutoff += backoff
+                        elif abs(len(content) - len(prev)) > cutoff or tokens != 'not_finished':
+                            prev = content
 
-                    if i == 0:
-                        try:
-                            if sent_message is not None:
-                                await context.bot.delete_message(chat_id=sent_message.chat_id,
-                                                                 message_id=sent_message.message_id)
-                            sent_message = await update.effective_message.reply_text(
-                                message_thread_id=get_thread_id(update),
-                                reply_to_message_id=get_reply_to_message_id(self.config, update),
-                                text=content,
-                            )
-                        except:
-                            continue
+                            try:
+                                use_markdown = tokens != 'not_finished'
+                                await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
+                                                              text=content, markdown=use_markdown)
 
-                    elif abs(len(content) - len(prev)) > cutoff or tokens != 'not_finished':
-                        prev = content
+                            except RetryAfter as e:
+                                backoff += 5
+                                await asyncio.sleep(e.retry_after)
+                                continue
 
-                        try:
-                            use_markdown = tokens != 'not_finished'
-                            await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
-                                                          text=content, markdown=use_markdown)
+                            except TimedOut:
+                                backoff += 5
+                                await asyncio.sleep(0.5)
+                                continue
 
-                        except RetryAfter as e:
-                            backoff += 5
-                            await asyncio.sleep(e.retry_after)
-                            continue
+                            except Exception:
+                                backoff += 5
+                                continue
 
-                        except TimedOut:
-                            backoff += 5
-                            await asyncio.sleep(0.5)
-                            continue
+                            await asyncio.sleep(0.01)
 
-                        except Exception:
-                            backoff += 5
-                            continue
+                        i += 1
+                        if tokens != 'not_finished':
+                            total_tokens = int(tokens)
 
-                        await asyncio.sleep(0.01)
-
-                    i += 1
-                    if tokens != 'not_finished':
-                        total_tokens = int(tokens)
+                await _reply()
 
             else:
                 async def _reply():
@@ -811,7 +817,7 @@ class ChatGPTTelegramBot:
                             except Exception as exception:
                                 raise exception
 
-                await wrap_with_indicator(update, context, _reply, constants.ChatAction.TYPING)
+                await _reply()
 
             add_chat_request_to_usage_tracker(self.usage, self.config, user_id, total_tokens)
 
@@ -823,6 +829,10 @@ class ChatGPTTelegramBot:
                 text=f"{localized_text('chat_fail', self.config['bot_language'])} {str(e)}",
                 parse_mode=constants.ParseMode.MARKDOWN
             )
+
+        finally:
+            sending_task.cancel()
+
 
     async def inline_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """

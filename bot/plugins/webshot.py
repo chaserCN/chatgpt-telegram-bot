@@ -1,6 +1,7 @@
 import os, requests, random, string
 from typing import Dict
-from .plugin import Plugin
+from .plugin import Plugin, generate_random_string
+
 
 class WebshotPlugin(Plugin):
     """
@@ -21,10 +22,6 @@ class WebshotPlugin(Plugin):
                 "required": ["url"],
             },
         }]
-    
-    def generate_random_string(self, length):
-        characters = string.ascii_letters + string.digits
-        return ''.join(random.choice(characters) for _ in range(length))
 
     async def execute(self, function_name, helper, **kwargs) -> Dict:
         try:
@@ -40,7 +37,7 @@ class WebshotPlugin(Plugin):
                 if not os.path.exists("uploads/webshot"):
                     os.makedirs("uploads/webshot")
 
-                image_file_path = os.path.join("uploads/webshot", f"{self.generate_random_string(15)}.png")
+                image_file_path = os.path.join("uploads/webshot", f"{generate_random_string(15)}.png")
                 with open(image_file_path, "wb") as f:
                     f.write(response.content)
 
