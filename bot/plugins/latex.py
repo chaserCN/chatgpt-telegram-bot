@@ -4,9 +4,10 @@ import urllib
 import urllib.parse
 import urllib.request
 from typing import Dict
-from urllib.error import HTTPError
+import matplotlib.pyplot as plt
 from cairosvg import svg2png
 from PIL import Image
+from PIL import ImageOps
 from .plugin import Plugin, generate_random_string
 
 
@@ -35,18 +36,9 @@ class LatexConverterPlugin(Plugin):
         }]
 
     async def execute(self, function_name, helper, **kwargs) -> Dict:
-        data = {
-            'from': kwargs['from'],
-        }
-
-        query = urllib.parse.urlencode(data)
-        url = 'https://math.vercel.app/?' + query
-
         try:
-            resp = urllib.request.urlopen(url)
-            svg_data = resp.read()
-
-            png_data = self.convert2png(svg_data)
+            svg_data = self.latex_to_svg(kwargs['from'])
+            png_data = self.svg_to_png(svg_data)
 
             image_file_path = self.save_to_tmp_file(png_data)
 
@@ -57,10 +49,6 @@ class LatexConverterPlugin(Plugin):
                     'value': image_file_path
                 }
             }
-
-        except HTTPError as e:
-            body = e.read()
-            return {'result': body if body else "Unable to convert LaTeX"}
 
         except Exception as e:
             return {'result': f"Unable to convert LaTeX: {e}"}
@@ -77,7 +65,29 @@ class LatexConverterPlugin(Plugin):
 
         return image_file_path
 
-    def convert2png(self, svg_data):
+    def latex_to_svg(self, latex_expression):
+        if not latex_expression.startswith('$'):
+            latex_expression = '$' + latex_expression
+        if not latex_expression.endswith('$'):
+            latex_expression += '$'
+
+        fig, ax = plt.subplots(figsize=(4, 3))
+
+        ax.text(0.5, 0.5, latex_expression, size=30, ha='center', va='center')
+
+        ax.axis('off')
+
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format="svg", bbox_inches='tight', pad_inches=0)
+        buffer.seek(0)
+        svg_data = buffer.getvalue()
+        buffer.close()
+
+        plt.close()
+
+        return svg_data
+
+    def svg_to_png(self, svg_data):
         image_data = svg2png(bytestring=svg_data)
         return self.add_margin(image_data)
 
@@ -90,16 +100,7 @@ class LatexConverterPlugin(Plugin):
         # Define the size of the margins you want to add
         margin = 30
 
-        # Create a new image with the desired dimensions including margins
-        new_width = image.width + margin + margin
-        new_height = image.height + margin + margin
-
-        # Create a new blank image with the calculated dimensions
-        new_image = Image.new("RGBA", (new_width, new_height),
-                              (255, 255, 255, 0))  # Adjust the color and transparency as needed
-
-        # Paste the original image onto the new image with margins
-        new_image.paste(image, (margin, margin))
+        new_image = ImageOps.expand(image, border=margin, fill=(255, 255, 255, 0))
 
         # Save the modified image to a BytesIO object
         output_stream = io.BytesIO()
@@ -108,3 +109,4 @@ class LatexConverterPlugin(Plugin):
         # Get the binary data of the modified image
         output_stream.seek(0)
         return output_stream.getvalue()
+
