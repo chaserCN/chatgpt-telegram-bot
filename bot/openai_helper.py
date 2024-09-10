@@ -42,7 +42,7 @@ def default_max_tokens(model: str) -> int:
         return base
     elif model in GPT_4_MODELS:
         return base * 2
-    elif model in GPT_3_16K_MODELS:    
+    elif model in GPT_3_16K_MODELS:
         if model == "gpt-3.5-turbo-1106":
             return 4096
         return base * 4
@@ -407,7 +407,7 @@ class OpenAIHelper:
             self.last_updated[chat_id] = datetime.datetime.now()
 
             if self.config['enable_vision_follow_up_questions']:
-                self.conversations_vision[chat_id] = True
+                #self.conversations_vision[chat_id] = True
                 self.__add_to_history(chat_id, role="user", content=content)
             else:
                 for message in content:
@@ -424,7 +424,7 @@ class OpenAIHelper:
             if exceeded_max_tokens or exceeded_max_history_size:
                 logging.info(f'Chat history for chat ID {chat_id} is too long. Summarising...')
                 try:
-                    
+
                     last = self.conversations[chat_id][-1]
                     summary = await self.__summarise(self.conversations[chat_id][:-1])
                     logging.debug(f'Summary: {summary}')
@@ -456,7 +456,7 @@ class OpenAIHelper:
             #     if len(functions) > 0:
             #         common_args['functions'] = self.plugin_manager.get_functions_specs()
             #         common_args['function_call'] = 'auto'
-            
+
             return await self.client.chat.completions.create(**common_args)
 
         except openai.RateLimitError as e:
@@ -481,10 +481,10 @@ class OpenAIHelper:
 
         response = await self.__common_get_chat_response_vision(chat_id, content)
 
-        
+
 
         # functions are not available for this model
-        
+
         # if self.config['enable_functions']:
         #     response, plugins_used = await self.__handle_function_call(chat_id, response)
         #     if is_direct_result(response):
@@ -532,7 +532,7 @@ class OpenAIHelper:
 
         response = await self.__common_get_chat_response_vision(chat_id, content, stream=True)
 
-        
+
 
         # if self.config['enable_functions']:
         #     response, plugins_used = await self.__handle_function_call(chat_id, response, stream=True)
@@ -646,7 +646,7 @@ class OpenAIHelper:
         try:
             encoding = tiktoken.encoding_for_model(model)
         except KeyError:
-            encoding = tiktoken.get_encoding("gpt-3.5-turbo")
+            encoding = tiktoken.get_encoding("cl100k_base")
 
         if model in GPT_3_MODELS + GPT_3_16K_MODELS:
             tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
@@ -690,7 +690,7 @@ class OpenAIHelper:
         model = self.config['vision_model']
         if model not in GPT_4_VISION_MODELS:
             raise NotImplementedError(f"""count_tokens_vision() is not implemented for model {model}.""")
-        
+
         w, h = image.size
         if w > h: w, h = h, w
         # this computation follows https://platform.openai.com/docs/guides/vision and https://openai.com/pricing#gpt-4-turbo
