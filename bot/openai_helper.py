@@ -248,11 +248,13 @@ class OpenAIHelper:
                 'messages': self.conversations[chat_id],
                 'temperature': self.config['temperature'],
                 'n': self.config['n_choices'],
-                'max_tokens': self.config['max_tokens'],
                 'presence_penalty': self.config['presence_penalty'],
                 'frequency_penalty': self.config['frequency_penalty'],
                 'stream': stream
             }
+
+            if self.config['max_tokens'] > 0:
+                common_args['max_tokens'] = self.config['max_tokens']
 
             if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
                 functions = self.plugin_manager.get_functions_specs()
