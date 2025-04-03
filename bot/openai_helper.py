@@ -28,7 +28,8 @@ GPT_4_MODELS = ("gpt-4", "gpt-4-0314", "gpt-4-0613")
 GPT_4_32K_MODELS = ("gpt-4-32k", "gpt-4-32k-0314", "gpt-4-32k-0613")
 GPT_4_VISION_MODELS = ("gpt-4-vision-preview",)
 GPT_4_128K_MODELS = ("gpt-4-1106-preview", "gpt-4-turbo", "gpt-4o")
-GPT_ALL_MODELS = GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS
+GPT_THINKING = ("o1",)
+GPT_ALL_MODELS = GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_THINKING
 
 
 def default_max_tokens(model: str) -> int:
@@ -52,6 +53,8 @@ def default_max_tokens(model: str) -> int:
         return 4096
     elif model in GPT_4_128K_MODELS:
         return 4096
+    elif model in GPT_THINKING:
+        return 0
 
 
 def are_functions_available(model: str) -> bool:
@@ -248,11 +251,13 @@ class OpenAIHelper:
                 'messages': self.conversations[chat_id],
                 'temperature': self.config['temperature'],
                 'n': self.config['n_choices'],
-                'max_tokens': self.config['max_tokens'],
                 'presence_penalty': self.config['presence_penalty'],
                 'frequency_penalty': self.config['frequency_penalty'],
                 'stream': stream
             }
+
+            if self.config['max_tokens'] > 0:
+                common_args['max_tokens'] = self.config['max_tokens']
 
             if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
                 functions = self.plugin_manager.get_functions_specs()
@@ -442,11 +447,13 @@ class OpenAIHelper:
                 'messages': self.conversations[chat_id][:-1] + [message],
                 'temperature': self.config['temperature'],
                 'n': 1, # several choices is not implemented yet
-                'max_tokens': self.config['vision_max_tokens'],
                 'presence_penalty': self.config['presence_penalty'],
                 'frequency_penalty': self.config['frequency_penalty'],
                 'stream': stream
             }
+
+            if self.config['vision_max_tokens'] is not None and self.config['vision_max_tokens'] > 0:
+                common_args['max_tokens'] = self.config['vision_max_tokens']
 
 
             # vision model does not yet support functions
@@ -631,6 +638,8 @@ class OpenAIHelper:
             return base * 31
         if self.config['model'] in GPT_4_128K_MODELS:
             return base * 31
+        if self.config['model'] in GPT_THINKING:
+            return base * 31
         raise NotImplementedError(
             f"Max tokens for model {self.config['model']} is not implemented yet."
         )
@@ -651,7 +660,7 @@ class OpenAIHelper:
         if model in GPT_3_MODELS + GPT_3_16K_MODELS:
             tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
             tokens_per_name = -1  # if there's a name, the role is omitted
-        elif model in GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS:
+        elif model in GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_THINKING:
             tokens_per_message = 3
             tokens_per_name = 1
         else:
@@ -688,8 +697,6 @@ class OpenAIHelper:
         image_file = io.BytesIO(image_bytes)
         image = Image.open(image_file)
         model = self.config['vision_model']
-        if model not in GPT_4_VISION_MODELS:
-            raise NotImplementedError(f"""count_tokens_vision() is not implemented for model {model}.""")
 
         w, h = image.size
         if w > h: w, h = h, w

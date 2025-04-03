@@ -455,6 +455,9 @@ class ChatGPTTelegramBot:
         """
         Interpret image using vision model.
         """
+
+        #self.print_nested(update)
+
         if not self.config['enable_vision'] or not await self.check_allowed_and_within_budget(update, context):
             return
 
@@ -650,10 +653,33 @@ class ChatGPTTelegramBot:
 
         await wrap_with_indicator(update, context, _execute, constants.ChatAction.TYPING)
 
+    def print_nested(self, obj, indent=0):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                print('  ' * indent + str(key) + ':')
+                if isinstance(value, (dict, list)):
+                    print('\n')
+                    self.print_nested(value, indent + 1)
+                else:
+                    print('  ' * (indent + 1) + str(value) + '\n')
+        elif isinstance(obj, list):
+            for index, item in enumerate(obj):
+                print('  ' * indent + f'[{index}]:')
+                if isinstance(item, (dict, list)):
+                    print('\n')
+                    self.print_nested(item, indent + 1)
+                else:
+                    print('  ' * (indent + 1) + str(item) + '\n')
+        else:
+            print('  ' * indent + str(obj) + '\n')
+
     async def prompt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         React to incoming messages and respond accordingly.
         """
+
+        #self.print_nested(update)
+
         if update.edited_message or not update.message or update.message.via_bot:
             return
 
