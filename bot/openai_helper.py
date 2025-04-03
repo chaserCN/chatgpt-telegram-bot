@@ -31,7 +31,6 @@ GPT_4_128K_MODELS = ("gpt-4-1106-preview", "gpt-4-turbo", "gpt-4o")
 GPT_THINKING = ("o1",)
 GPT_ALL_MODELS = GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_THINKING
 
-
 def default_max_tokens(model: str) -> int:
     """
     Gets the default number of max tokens for the given model.
