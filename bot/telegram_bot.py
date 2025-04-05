@@ -60,6 +60,18 @@ class ChatGPTTelegramBot:
         self.last_message = {}
         self.inline_queries_cache = {}
 
+    def _get_user_name_for_api(self, user_id: int, telegram_user_name: str) -> str:
+            """Gets the user name to be sent to OpenAI API.
+            Looks up in user_names_dict config, falls back to telegram name.
+            """
+            user_name = self.config.get('user_names_dict', {}).get(str(user_id))
+            if user_name is None:
+                logging.debug(f"User ID {user_id} not in USER_NAMES_DICT, using Telegram name: {telegram_user_name}")
+                return telegram_user_name
+            else:
+                logging.debug(f"Using name '{user_name}' from USER_NAMES_DICT for user ID {user_id}")
+                return user_name
+
     async def help(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """
         Shows the help menu.
@@ -382,6 +394,8 @@ class ChatGPTTelegramBot:
                 return
 
             user_id = update.message.from_user.id
+            user_name = self._get_user_name_for_api(user_id=user_id, telegram_user_name=update.message.from_user.name)
+
             if user_id not in self.usage:
                 self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
 
@@ -414,7 +428,10 @@ class ChatGPTTelegramBot:
                         )
                 else:
                     # Get the response of the transcript
-                    response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=transcript)
+
+                    response, total_tokens = await self.openai.get_chat_response(
+                        chat_id=chat_id, query=transcript, user_name=user_name
+                    )
 
                     self.usage[user_id].add_chat_tokens(total_tokens, self.config['token_price'])
                     if str(user_id) not in allowed_user_ids and 'guests' in self.usage:
@@ -525,13 +542,15 @@ class ChatGPTTelegramBot:
             
 
             user_id = update.message.from_user.id
+            user_name = self._get_user_name_for_api(user_id=user_id, telegram_user_name=update.message.from_user.name)
+            
             if user_id not in self.usage:
                 self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
 
             if self.config['stream']:
 
                 stream_response = self.openai.interpret_image_stream(
-                    chat_id=chat_id, user_name=update.message.from_user.name, fileobj=temp_file_png, prompt=prompt
+                    chat_id=chat_id, fileobj=temp_file_png, user_name=self.config.get('user_names_dict', {}).get(str(user_id), update.message.from_user.name), prompt=prompt
                 )
                 i = 0
                 prev = ''
@@ -614,7 +633,7 @@ class ChatGPTTelegramBot:
 
                 try:
                     interpretation, total_tokens = await self.openai.interpret_image(
-                        chat_id, update.message.from_user.name, temp_file_png, prompt=prompt
+                        chat_id, temp_file_png, self.config.get('user_names_dict', {}).get(str(user_id), update.message.from_user.name), prompt=prompt
                     )
 
 
@@ -694,7 +713,8 @@ class ChatGPTTelegramBot:
             f'New message received from user {update.message.from_user.name} (id: {update.message.from_user.id})')
         chat_id = update.effective_chat.id
         user_id = update.message.from_user.id
-        user_name = update.message.from_user.name
+        # Look up user name from config, fallback to Telegram name if not found
+        user_name_for_api = self._get_user_name_for_api(user_id, update.message.from_user.name)
         prompt = message_text(update.message)
         self.last_message[chat_id] = prompt
 
@@ -737,7 +757,7 @@ class ChatGPTTelegramBot:
                     nonlocal total_tokens
 
                     response_stream = self.openai.get_chat_response_stream(
-                        chat_id=chat_id, user_name=user_name, query=prompt
+                        chat_id=chat_id, user_name=user_name_for_api, query=prompt
                     )
                     i = 0
                     prev = ''
@@ -823,7 +843,7 @@ class ChatGPTTelegramBot:
                 async def _reply():
                     nonlocal total_tokens
                     response, total_tokens = await self.openai.get_chat_response(
-                        chat_id=chat_id, user_name=user_name, query=prompt
+                        chat_id=chat_id, user_name=user_name_for_api, query=prompt
                     )
 
                     if is_direct_result(response):

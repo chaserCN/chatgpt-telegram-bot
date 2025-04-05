@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 
 from dotenv import load_dotenv
 
@@ -73,10 +74,23 @@ def main():
         logging.warning('The environment variable MONTHLY_GUEST_BUDGET is deprecated. '
                         'Please use GUEST_BUDGET with BUDGET_PERIOD instead.')
 
+    # Load and parse USER_NAMES_DICT from .env
+    user_names_json = os.environ.get('USER_NAMES_DICT', '{}') # Default to empty JSON object
+    user_names_dict = {}
+    try:
+        parsed_dict = json.loads(user_names_json)
+        # Ensure keys are strings for consistent lookups later
+        user_names_dict = {str(k): v for k, v in parsed_dict.items()}
+        logging.info(f"Loaded {len(user_names_dict)} user names from USER_NAMES_DICT.")
+    except json.JSONDecodeError:
+        if user_names_json != '{}': # Log error only if it wasn't the default empty dict
+             logging.error(f"Invalid JSON format for USER_NAMES_DICT in .env: {user_names_json}. User names will not be added.")
+
     telegram_config = {
         'token': os.environ['TELEGRAM_BOT_TOKEN'],
         'admin_user_ids': os.environ.get('ADMIN_USER_IDS', '-'),
         'allowed_user_ids': os.environ.get('ALLOWED_TELEGRAM_USER_IDS', '*'),
+        'user_names_dict': user_names_dict,
         'enable_quoting': os.environ.get('ENABLE_QUOTING', 'true').lower() == 'true',
         'enable_image_generation': os.environ.get('ENABLE_IMAGE_GENERATION', 'true').lower() == 'true',
         'enable_transcription': os.environ.get('ENABLE_TRANSCRIPTION', 'true').lower() == 'true',

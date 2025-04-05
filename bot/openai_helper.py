@@ -126,16 +126,13 @@ class OpenAIHelper:
             self.reset_chat_history(chat_id)
         return len(self.conversations[chat_id]), self.__count_tokens(self.conversations[chat_id])
 
-    async def get_chat_response(self, chat_id: int, user_name: str, query: str) -> tuple[str, str]:
+    async def get_chat_response(self, chat_id: int, query: str, user_name: str | None) -> tuple[str, str]:
         """
         Gets a full response from the GPT model.
-        :param chat_id: The chat ID
-        :param user_name: The user's name
-        :param query: The query to send to the model
-        :return: The answer from the model and the number of tokens used
+        :param user_name: The user's name (optional)
         """
         plugins_used = ()
-        response = await self.__common_get_chat_response(chat_id, user_name, query)
+        response = await self.__common_get_chat_response(chat_id, query, user_name)
         if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
             response, plugins_used = await self.__handle_function_call(chat_id, response)
             if is_direct_result(response):
@@ -170,16 +167,13 @@ class OpenAIHelper:
 
         return answer, response.usage.total_tokens
 
-    async def get_chat_response_stream(self, chat_id: int, user_name: str, query: str):
+    async def get_chat_response_stream(self, chat_id: int, query: str, user_name: str | None):
         """
         Stream response from the GPT model.
-        :param chat_id: The chat ID
-        :param user_name: The user's name
-        :param query: The query to send to the model
-        :return: The answer from the model and the number of tokens used, or 'not_finished'
+        :param user_name: The user's name (optional)
         """
         plugins_used = ()
-        response = await self.__common_get_chat_response(chat_id, user_name, query, stream=True)
+        response = await self.__common_get_chat_response(chat_id, query, user_name, stream=True)
         if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
             response, plugins_used = await self.__handle_function_call(chat_id, response, stream=True)
             if is_direct_result(response):
@@ -215,13 +209,10 @@ class OpenAIHelper:
         wait=wait_fixed(20),
         stop=stop_after_attempt(3)
     )
-    async def __common_get_chat_response(self, chat_id: int, user_name: str, query: str, stream=False):
+    async def __common_get_chat_response(self, chat_id: int, query: str, user_name: str | None, stream=False):
         """
         Request a response from the GPT model.
-        :param chat_id: The chat ID
-        :param user_name: The user's name
-        :param query: The query to send to the model
-        :return: The answer from the model and the number of tokens used
+        :param user_name: The user's name (optional)
         """
         bot_language = self.config['bot_language']
         try:
@@ -400,13 +391,10 @@ class OpenAIHelper:
         wait=wait_fixed(20),
         stop=stop_after_attempt(3)
     )
-    async def __common_get_chat_response_vision(self, chat_id: int, user_name: str, content: list, stream=False):
+    async def __common_get_chat_response_vision(self, chat_id: int, content: list, user_name: str | None, stream=False):
         """
         Request a response from the GPT model.
-        :param chat_id: The chat ID
-        :param user_name: The user's name
-        :param content: The list containing text and image data for the prompt
-        :return: The answer from the model and the number of tokens used
+        :param user_name: The user's name (optional)
         """
         bot_language = self.config['bot_language']
         try:
@@ -417,7 +405,7 @@ class OpenAIHelper:
 
             if self.config['enable_vision_follow_up_questions']:
                 self.conversations_vision[chat_id] = True
-                # Pass user_name to history
+                # Pass name to history
                 self.__add_to_history(chat_id, role="user", content=content, name=user_name)
             else:
                 query = ""
@@ -425,7 +413,7 @@ class OpenAIHelper:
                     if message['type'] == 'text':
                         query = message['text']
                         break
-                # Pass user_name to history
+                # Pass name to history
                 self.__add_to_history(chat_id, role="user", content=query, name=user_name)
 
             # Summarize the chat history if it's too long to avoid excessive token usage
@@ -446,8 +434,12 @@ class OpenAIHelper:
                     logging.warning(f'Error while summarising chat history: {str(e)}. Popping elements instead...')
                     self.conversations[chat_id] = self.conversations[chat_id][-self.config['max_history_size']:]
             
-            # Add user_name to the message object sent to the API
-            message = {'role':'user', 'content':content, 'name': user_name}
+            # Add user name to the message object sent to the API if provided
+            message = {'role':'user', 'content':content}
+            
+            sanitized_user_name = self._sanitize_openai_name(user_name)
+            if sanitized_user_name:
+                message['name'] = sanitized_user_name
 
             common_args = {
                 'model': self.config['vision_model'],
@@ -483,10 +475,10 @@ class OpenAIHelper:
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
 
-    async def interpret_image(self, chat_id, user_name: str, fileobj, prompt=None):
+    async def interpret_image(self, chat_id: int, fileobj, user_name: str | None, prompt=None):
         """
         Interprets a given PNG image file using the Vision model.
-        :param user_name: The user's name
+        :param user_name: The user's name (optional)
         """
         image = encode_image(fileobj)
         prompt = self.config['vision_prompt'] if prompt is None else prompt
@@ -495,7 +487,7 @@ class OpenAIHelper:
                     'image_url': {'url':image, 'detail':self.config['vision_detail'] } }]
         
         # Pass user_name here
-        response = await self.__common_get_chat_response_vision(chat_id, user_name, content)
+        response = await self.__common_get_chat_response_vision(chat_id, content, user_name)
 
 
 
@@ -536,10 +528,10 @@ class OpenAIHelper:
 
         return answer, response.usage.total_tokens
 
-    async def interpret_image_stream(self, chat_id, user_name: str, fileobj, prompt=None):
+    async def interpret_image_stream(self, chat_id: int, fileobj, user_name: str | None, prompt=None):
         """
-        Interprets a given PNG image file using the Vision model.
-        :param user_name: The user's name
+        Interprets a given PNG image file using the Vision model. Streamed.
+        :param user_name: The user's name (optional)
         """
         image = encode_image(fileobj)
         prompt = self.config['vision_prompt'] if prompt is None else prompt
@@ -548,7 +540,7 @@ class OpenAIHelper:
                     'image_url': {'url':image, 'detail':self.config['vision_detail'] } }]
         
         # Pass user_name here
-        response = await self.__common_get_chat_response_vision(chat_id, user_name, content, stream=True)
+        response = await self.__common_get_chat_response_vision(chat_id, content, user_name, stream=True)
 
 
 
@@ -603,6 +595,24 @@ class OpenAIHelper:
         max_age_minutes = self.config['max_conversation_age_minutes']
         return last_updated < now - datetime.timedelta(minutes=max_age_minutes)
 
+    def _sanitize_openai_name(self, name: str) -> str | None:
+        """Sanitizes a string to be a valid OpenAI API name.
+        Replaces spaces with underscores, removes invalid chars, truncates to 64.
+        Returns None if the result is empty or consists only of underscores.
+        """
+        if not name: # Handle empty input name
+            return None
+            
+        name_with_underscores = name.replace(' ', '_')
+        sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '', name_with_underscores)
+        final_name = sanitized_name[:64]
+
+        # Return the name only if it's not empty and not just underscores
+        if final_name and final_name.strip('_'):
+            return final_name
+        else:
+            return None
+
     def __add_function_call_to_history(self, chat_id, function_name, content):
         """
         Adds a function call to the conversation history
@@ -611,10 +621,7 @@ class OpenAIHelper:
 
     def __add_to_history(self, chat_id, role, content, name=None):
         """
-        Adds a message to the chat history.
-        :param chat_id: The chat ID
-        :param role: The role of the message sender (e.g., 'user', 'assistant')
-        :param content: The content of the message
+        Adds a message to the chat history with name validation.
         :param name: The name of the participant (optional)
         """
         if role == 'system' and not self.config['system_prompt']:
@@ -626,9 +633,10 @@ class OpenAIHelper:
         }
         
         if role == 'user' and name:
-            valid_name = re.sub(r'[^a-zA-Z0-9_ -]', '', name)
-            valid_name = valid_name.replace(' ', '_')
-            message['name'] = valid_name
+            # Sanitize the name using the helper method
+            sanitized_user_name = self._sanitize_openai_name(name)
+            if sanitized_user_name:
+                message['name'] = sanitized_user_name
 
         self.conversations[chat_id].append(message)
 
