@@ -530,7 +530,9 @@ class ChatGPTTelegramBot:
 
             if self.config['stream']:
 
-                stream_response = self.openai.interpret_image_stream(chat_id=chat_id, fileobj=temp_file_png, prompt=prompt)
+                stream_response = self.openai.interpret_image_stream(
+                    chat_id=chat_id, user_name=update.message.from_user.name, fileobj=temp_file_png, prompt=prompt
+                )
                 i = 0
                 prev = ''
                 sent_message = None
@@ -611,7 +613,9 @@ class ChatGPTTelegramBot:
             else:
 
                 try:
-                    interpretation, total_tokens = await self.openai.interpret_image(chat_id, temp_file_png, prompt=prompt)
+                    interpretation, total_tokens = await self.openai.interpret_image(
+                        chat_id, update.message.from_user.name, temp_file_png, prompt=prompt
+                    )
 
 
                     try:
@@ -690,6 +694,7 @@ class ChatGPTTelegramBot:
             f'New message received from user {update.message.from_user.name} (id: {update.message.from_user.id})')
         chat_id = update.effective_chat.id
         user_id = update.message.from_user.id
+        user_name = update.message.from_user.name
         prompt = message_text(update.message)
         self.last_message[chat_id] = prompt
 
@@ -731,14 +736,16 @@ class ChatGPTTelegramBot:
                 async def _reply():
                     nonlocal total_tokens
 
-                    stream_response = self.openai.get_chat_response_stream(chat_id=chat_id, query=prompt)
+                    response_stream = self.openai.get_chat_response_stream(
+                        chat_id=chat_id, user_name=user_name, query=prompt
+                    )
                     i = 0
                     prev = ''
                     sent_message = None
                     backoff = 0
                     stream_chunk = 0
 
-                    async for content, tokens in stream_response:
+                    async for content, tokens in response_stream:
                         sending_task.cancel()
 
                         if is_direct_result(content):
@@ -815,7 +822,9 @@ class ChatGPTTelegramBot:
             else:
                 async def _reply():
                     nonlocal total_tokens
-                    response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=prompt)
+                    response, total_tokens = await self.openai.get_chat_response(
+                        chat_id=chat_id, user_name=user_name, query=prompt
+                    )
 
                     if is_direct_result(response):
                         return await handle_direct_result(self.config, update, response)

@@ -125,15 +125,16 @@ class OpenAIHelper:
             self.reset_chat_history(chat_id)
         return len(self.conversations[chat_id]), self.__count_tokens(self.conversations[chat_id])
 
-    async def get_chat_response(self, chat_id: int, query: str) -> tuple[str, str]:
+    async def get_chat_response(self, chat_id: int, user_name: str, query: str) -> tuple[str, str]:
         """
         Gets a full response from the GPT model.
         :param chat_id: The chat ID
+        :param user_name: The user's name
         :param query: The query to send to the model
         :return: The answer from the model and the number of tokens used
         """
         plugins_used = ()
-        response = await self.__common_get_chat_response(chat_id, query)
+        response = await self.__common_get_chat_response(chat_id, user_name, query)
         if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
             response, plugins_used = await self.__handle_function_call(chat_id, response)
             if is_direct_result(response):
@@ -168,15 +169,16 @@ class OpenAIHelper:
 
         return answer, response.usage.total_tokens
 
-    async def get_chat_response_stream(self, chat_id: int, query: str):
+    async def get_chat_response_stream(self, chat_id: int, user_name: str, query: str):
         """
         Stream response from the GPT model.
         :param chat_id: The chat ID
+        :param user_name: The user's name
         :param query: The query to send to the model
         :return: The answer from the model and the number of tokens used, or 'not_finished'
         """
         plugins_used = ()
-        response = await self.__common_get_chat_response(chat_id, query, stream=True)
+        response = await self.__common_get_chat_response(chat_id, user_name, query, stream=True)
         if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
             response, plugins_used = await self.__handle_function_call(chat_id, response, stream=True)
             if is_direct_result(response):
@@ -212,10 +214,11 @@ class OpenAIHelper:
         wait=wait_fixed(20),
         stop=stop_after_attempt(3)
     )
-    async def __common_get_chat_response(self, chat_id: int, query: str, stream=False):
+    async def __common_get_chat_response(self, chat_id: int, user_name: str, query: str, stream=False):
         """
         Request a response from the GPT model.
         :param chat_id: The chat ID
+        :param user_name: The user's name
         :param query: The query to send to the model
         :return: The answer from the model and the number of tokens used
         """
@@ -226,7 +229,7 @@ class OpenAIHelper:
 
             self.last_updated[chat_id] = datetime.datetime.now()
 
-            self.__add_to_history(chat_id, role="user", content=query)
+            self.__add_to_history(chat_id, role="user", content=query, name=user_name)
 
             # Summarize the chat history if it's too long to avoid excessive token usage
             token_count = self.__count_tokens(self.conversations[chat_id])
@@ -396,11 +399,12 @@ class OpenAIHelper:
         wait=wait_fixed(20),
         stop=stop_after_attempt(3)
     )
-    async def __common_get_chat_response_vision(self, chat_id: int, content: list, stream=False):
+    async def __common_get_chat_response_vision(self, chat_id: int, user_name: str, content: list, stream=False):
         """
         Request a response from the GPT model.
         :param chat_id: The chat ID
-        :param query: The query to send to the model
+        :param user_name: The user's name
+        :param content: The list containing text and image data for the prompt
         :return: The answer from the model and the number of tokens used
         """
         bot_language = self.config['bot_language']
@@ -411,14 +415,17 @@ class OpenAIHelper:
             self.last_updated[chat_id] = datetime.datetime.now()
 
             if self.config['enable_vision_follow_up_questions']:
-                #self.conversations_vision[chat_id] = True
-                self.__add_to_history(chat_id, role="user", content=content)
+                self.conversations_vision[chat_id] = True
+                # Pass user_name to history
+                self.__add_to_history(chat_id, role="user", content=content, name=user_name)
             else:
+                query = ""
                 for message in content:
                     if message['type'] == 'text':
                         query = message['text']
                         break
-                self.__add_to_history(chat_id, role="user", content=query)
+                # Pass user_name to history
+                self.__add_to_history(chat_id, role="user", content=query, name=user_name)
 
             # Summarize the chat history if it's too long to avoid excessive token usage
             token_count = self.__count_tokens(self.conversations[chat_id])
@@ -428,7 +435,6 @@ class OpenAIHelper:
             if exceeded_max_tokens or exceeded_max_history_size:
                 logging.info(f'Chat history for chat ID {chat_id} is too long. Summarising...')
                 try:
-
                     last = self.conversations[chat_id][-1]
                     summary = await self.__summarise(self.conversations[chat_id][:-1])
                     logging.debug(f'Summary: {summary}')
@@ -438,8 +444,9 @@ class OpenAIHelper:
                 except Exception as e:
                     logging.warning(f'Error while summarising chat history: {str(e)}. Popping elements instead...')
                     self.conversations[chat_id] = self.conversations[chat_id][-self.config['max_history_size']:]
-
-            message = {'role':'user', 'content':content}
+            
+            # Add user_name to the message object sent to the API
+            message = {'role':'user', 'content':content, 'name': user_name}
 
             common_args = {
                 'model': self.config['vision_model'],
@@ -475,17 +482,19 @@ class OpenAIHelper:
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
 
-    async def interpret_image(self, chat_id, fileobj, prompt=None):
+    async def interpret_image(self, chat_id, user_name: str, fileobj, prompt=None):
         """
         Interprets a given PNG image file using the Vision model.
+        :param user_name: The user's name
         """
         image = encode_image(fileobj)
         prompt = self.config['vision_prompt'] if prompt is None else prompt
 
         content = [{'type':'text', 'text':prompt}, {'type':'image_url', \
                     'image_url': {'url':image, 'detail':self.config['vision_detail'] } }]
-
-        response = await self.__common_get_chat_response_vision(chat_id, content)
+        
+        # Pass user_name here
+        response = await self.__common_get_chat_response_vision(chat_id, user_name, content)
 
 
 
@@ -526,17 +535,19 @@ class OpenAIHelper:
 
         return answer, response.usage.total_tokens
 
-    async def interpret_image_stream(self, chat_id, fileobj, prompt=None):
+    async def interpret_image_stream(self, chat_id, user_name: str, fileobj, prompt=None):
         """
         Interprets a given PNG image file using the Vision model.
+        :param user_name: The user's name
         """
         image = encode_image(fileobj)
         prompt = self.config['vision_prompt'] if prompt is None else prompt
 
         content = [{'type':'text', 'text':prompt}, {'type':'image_url', \
                     'image_url': {'url':image, 'detail':self.config['vision_detail'] } }]
-
-        response = await self.__common_get_chat_response_vision(chat_id, content, stream=True)
+        
+        # Pass user_name here
+        response = await self.__common_get_chat_response_vision(chat_id, user_name, content, stream=True)
 
 
 
@@ -597,14 +608,26 @@ class OpenAIHelper:
         """
         self.conversations[chat_id].append({"role": "function", "name": function_name, "content": content})
 
-    def __add_to_history(self, chat_id, role, content):
+    def __add_to_history(self, chat_id, role, content, name=None):
         """
-        Adds a message to the conversation history.
+        Adds a message to the chat history.
         :param chat_id: The chat ID
-        :param role: The role of the message sender
-        :param content: The message content
+        :param role: The role of the message sender (e.g., 'user', 'assistant')
+        :param content: The content of the message
+        :param name: The name of the participant (optional)
         """
-        self.conversations[chat_id].append({"role": role, "content": content})
+        if role == 'system' and not self.config['system_prompt']:
+            return
+
+        message = {
+            "role": role,
+            "content": content
+        }
+        
+        if role == 'user' and name:
+            message['name'] = name
+
+        self.conversations[chat_id].append(message)
 
     async def __summarise(self, conversation) -> str:
         """
