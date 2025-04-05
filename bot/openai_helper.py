@@ -2,6 +2,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import re
 
 import tiktoken
 
@@ -625,7 +626,9 @@ class OpenAIHelper:
         }
         
         if role == 'user' and name:
-            message['name'] = name
+            valid_name = re.sub(r'[^a-zA-Z0-9_ -]', '', name)
+            valid_name = valid_name.replace(' ', '_')
+            message['name'] = valid_name
 
         self.conversations[chat_id].append(message)
 
