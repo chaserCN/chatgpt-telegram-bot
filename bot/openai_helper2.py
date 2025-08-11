@@ -48,11 +48,11 @@ class OpenAIHelper2:
 
         return result
 
-    async def get_chat_response_stream(self, chat_id: int, query: str, user_name: str | None) -> tuple[str, bool]:
+    async def get_chat_response_stream(self, chat_id: int, query: str, user_name: str | None) -> tuple[str, bool, bool]:
         response = await self.__send_query(chat_id, query, user_name, stream=True)
         response, plugins_used = await self.__handle_function_call(chat_id, response, stream=True)
         if is_direct_result(response):
-            yield response, True
+            yield response, True, True
             return
 
         answer = ''
@@ -60,7 +60,7 @@ class OpenAIHelper2:
         async for event in response:
             if event.type == 'response.output_text.delta':
                 answer += event.delta
-                yield answer, False
+                yield answer, False, False
                 
             elif event.type == 'response.completed':
                 self.last_response_ids[chat_id] = event.response.id
@@ -68,9 +68,15 @@ class OpenAIHelper2:
                 result = await self.__process_nonfunction_response(event.response)
                 result = self.__add_plugins_info(result, plugins_used)
 
-                yield result, True
+                yield result, True, True
                 return
                 
+            elif event.type == 'response.web_search_call.in_progress' or event.type == 'response.web_search_call.searching':
+                yield answer + f"\n🔍 _{localized_text('web_search_in_progress', self.config['bot_language'])}_", False, True
+                
+            elif event.type == 'response.web_search_call.completed':
+                yield answer + f"\n✅ _{localized_text('web_search_completed', self.config['bot_language'])}_", False, True
+
             elif event.type == 'error':
                 raise Exception(f"Streaming error: {event.error}")
 
@@ -78,7 +84,7 @@ class OpenAIHelper2:
         answer = answer.strip()
         result = self.__add_plugins_info(answer, plugins_used)
 
-        yield result, True
+        yield result, True, True
 
     @retry(
         reraise=True,
@@ -274,7 +280,7 @@ class OpenAIHelper2:
         has_web_search = any(output.type == "web_search_call" for output in response.output or [])
         if has_web_search:
             web_search_prefix = localized_text('web_search_result', self.config['bot_language'])
-            answer = f"{web_search_prefix}\n\n{answer}"
+            answer = f"_{web_search_prefix}_\n\n{answer}"
         
         return answer
 
@@ -330,7 +336,9 @@ class OpenAIHelper2:
         if len(functions) > 0:
             tools.extend(functions)
         
-        tools.append({"type": "web_search_preview"})
+        # Add web search only if enabled in config
+        if self.config.get('enable_web_search', True):
+            tools.append({"type": "web_search_preview"})
 
         return tools
 
@@ -352,7 +360,7 @@ class OpenAIHelper2:
 
         return answer
 
-    async def interpret_image_stream(self, chat_id: int, fileobj, user_name: str | None, prompt=None) -> tuple[str, bool]:
+    async def interpret_image_stream(self, chat_id: int, fileobj, user_name: str | None, prompt=None) -> tuple[str, bool, bool]:
         response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=True)
 
         answer = ''
@@ -360,21 +368,27 @@ class OpenAIHelper2:
         async for event in response:
             if event.type == 'response.output_text.delta':
                 answer += event.delta
-                yield answer, False
+                yield answer, False, False
                 
             elif event.type == 'response.completed':
                 self.last_response_ids[chat_id] = event.response.id
                 result = await self.__process_nonfunction_response(event.response)
-                yield result, True
+                yield result, True, True
                 return
                 
+            elif event.type == 'response.web_search_call.in_progress' or event.type == 'response.web_search_call.searching':
+                yield answer + f"\n🔍 _{localized_text('web_search_in_progress', self.config['bot_language'])}_", False, True
+                
+            elif event.type == 'response.web_search_call.completed':
+                yield answer + f"\n✅ _{localized_text('web_search_completed', self.config['bot_language'])}_", False, True
+
             elif event.type == 'error':
                 raise Exception(f"Streaming error: {event.error}")
 
         # Fallback if we didn't get a completion event
         answer = answer.strip()
         
-        yield answer, True
+        yield answer, True, True
 
     @retry(
         reraise=True,

@@ -388,7 +388,7 @@ class ChatGPTTelegramBot:
             if self.config['stream']:
 
                 stream_response = self.openai.interpret_image_stream(
-                    chat_id=chat_id, fileobj=temp_file_png, user_name=self.config.get('user_names_dict', {}).get(str(user_id), update.message.from_user.name), prompt=prompt
+                    chat_id=chat_id, fileobj=temp_file_png, user_name=user_name, prompt=prompt
                 )
                 i = 0
                 prev = ''
@@ -396,7 +396,7 @@ class ChatGPTTelegramBot:
                 backoff = 0
                 stream_chunk = 0
 
-                async for content, is_finished in stream_response:
+                async for content, is_finished, use_markdown in stream_response:
                     if is_direct_result(content):
                         return await handle_direct_result(self.config, update, content)
 
@@ -442,7 +442,6 @@ class ChatGPTTelegramBot:
                         prev = content
 
                         try:
-                            use_markdown = is_finished
                             await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
                                                           text=content, markdown=use_markdown)
 
@@ -593,9 +592,7 @@ class ChatGPTTelegramBot:
                     backoff = 0
                     stream_chunk = 0
 
-                    async for content, is_finished in response_stream:
-                        sending_task.cancel()
-
+                    async for content, is_finished, use_markdown in response_stream:
                         if is_direct_result(content):
                             return await handle_direct_result(self.config, update, content)
 
@@ -641,7 +638,6 @@ class ChatGPTTelegramBot:
                             prev = content
 
                             try:
-                                use_markdown = is_finished
                                 await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
                                                               text=content, markdown=use_markdown)
 
@@ -663,6 +659,8 @@ class ChatGPTTelegramBot:
 
                         i += 1
 
+                    sending_task.cancel()
+
                 await _reply()
 
             else:
@@ -670,6 +668,8 @@ class ChatGPTTelegramBot:
                     response = await self.openai.get_chat_response(
                         chat_id=chat_id, user_name=user_name_for_api, query=prompt
                     )
+
+                    sending_task.cancel()
 
                     if is_direct_result(response):
                         return await handle_direct_result(self.config, update, response)
@@ -795,7 +795,7 @@ class ChatGPTTelegramBot:
                     i = 0
                     prev = ''
                     backoff = 0
-                    async for content, is_finished in stream_response:
+                    async for content, is_finished, use_markdown in stream_response:
                         if is_direct_result(content):
                             cleanup_intermediate_files(content)
                             await edit_message_with_retry(context, chat_id=None,
@@ -822,7 +822,6 @@ class ChatGPTTelegramBot:
                         elif abs(len(content) - len(prev)) > cutoff or is_finished:
                             prev = content
                             try:
-                                use_markdown = is_finished
                                 divider = '_' if use_markdown else ''
                                 text = f'{query}\n\n{divider}{answer_tr}:{divider}\n{content}'
 

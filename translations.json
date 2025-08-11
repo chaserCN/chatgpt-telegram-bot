@@ -47,7 +47,9 @@
         "ask_chatgpt":"Ask ChatGPT",
         "loading":"Loading...",
         "function_unavailable_in_inline_mode": "This function is unavailable in inline mode",
-        "web_search_result":"Web search result:"
+        "web_search_result":"Web search result:",
+        "web_search_in_progress":"Searching the web...",
+        "web_search_completed":"Web search completed"
     },
     "es": {
         "help_description":"Muestra el mensaje de ayuda",
@@ -95,7 +97,9 @@
         "ask_chatgpt":"Preguntar a ChatGPT",
         "loading":"Cargando...",
         "function_unavailable_in_inline_mode": "Esta función no está disponible en el modo inline",
-        "web_search_result":"Resultado de búsqueda web:"
+        "web_search_result":"Resultado de búsqueda web:",
+        "web_search_in_progress":"Buscando en la web...",
+        "web_search_completed":"Búsqueda web completada"
     },
     "pt-br": {
         "help_description": "Mostra a mensagem de ajuda",
@@ -143,7 +147,9 @@
         "ask_chatgpt": "Perguntar ao ChatGPT",
         "loading": "Carregando...",
         "function_unavailable_in_inline_mode": "Esta função não está disponível no modo inline",
-        "web_search_result": "Resultado da pesquisa na web:"
+        "web_search_result": "Resultado da pesquisa na web:",
+        "web_search_in_progress": "Pesquisando na web...",
+        "web_search_completed": "Pesquisa na web concluída"
     },
     "de": {
         "help_description":"Zeige die Hilfenachricht",
@@ -191,7 +197,9 @@
         "ask_chatgpt":"Frage ChatGPT",
         "loading":"Lade...",
         "function_unavailable_in_inline_mode": "Diese Funktion ist im Inline-Modus nicht verfügbar",
-        "web_search_result":"Web-Suchergebnis:"
+        "web_search_result":"Web-Suchergebnis:",
+        "web_search_in_progress":"Suche im Web...",
+        "web_search_completed":"Web-Suche abgeschlossen"
     },
     "fi": {
         "help_description":"Näytä ohjeet",
@@ -238,7 +246,10 @@
         "answer_with_chatgpt":"Vastaa ChatGPT:n avulla",
         "ask_chatgpt":"Kysy ChatGPT:ltä",
         "loading":"Lataa...",
-        "function_unavailable_in_inline_mode": "Tämä toiminto ei ole käytettävissä sisäisessä tilassa"
+        "function_unavailable_in_inline_mode": "Tämä toiminto ei ole käytettävissä sisäisessä tilassa",
+        "web_search_result":"Verkkohakutulos:",
+        "web_search_in_progress":"Etsitään verkosta...",
+        "web_search_completed":"Verkkohaku valmis"
     },
     "ru": {
         "help_description":"Показать справочное сообщение",
@@ -285,7 +296,10 @@
         "answer_with_chatgpt":"Ответить с помощью ChatGPT",
         "ask_chatgpt":"Спросить ChatGPT",
         "loading":"Загрузка...",
-        "function_unavailable_in_inline_mode": "Эта функция недоступна в режиме inline"
+        "function_unavailable_in_inline_mode": "Эта функция недоступна в режиме inline",
+        "web_search_result":"Результат поиска в интернете:",
+        "web_search_in_progress":"Ищу в интернете...",
+        "web_search_completed":"Поиск в интернете завершен"
     },
     "tr": {
         "help_description":"Yardım mesajını göster",
@@ -332,7 +346,10 @@
         "answer_with_chatgpt":"ChatGPT ile cevapla",
         "ask_chatgpt":"ChatGPT'ye sor",
         "loading":"Yükleniyor...",
-        "function_unavailable_in_inline_mode": "Bu işlev inline modda kullanılamaz"
+        "function_unavailable_in_inline_mode": "Bu işlev inline modda kullanılamaz",
+        "web_search_result":"Web arama sonucu:",
+        "web_search_in_progress":"Web'de aranıyor...",
+        "web_search_completed":"Web araması tamamlandı"
     },
     "it": {
         "help_description":"Mostra il messaggio di aiuto",
@@ -379,7 +396,10 @@
         "answer_with_chatgpt":"Rispondi con ChatGPT",
         "ask_chatgpt":"Chiedi a ChatGPT",
         "loading":"Carico...",
-        "function_unavailable_in_inline_mode": "Questa funzione non è disponibile in modalità inline"
+        "function_unavailable_in_inline_mode": "Questa funzione non è disponibile in modalità inline",
+        "web_search_result":"Risultato della ricerca web:",
+        "web_search_in_progress":"Ricerca sul web...",
+        "web_search_completed":"Ricerca web completata"
     },
     "id": {
         "help_description": "Menampilkan pesan bantuan",
@@ -426,7 +446,10 @@
         "answer_with_chatgpt": "Jawaban dengan ChatGPT",
         "ask_chatgpt": "Tanya ChatGPT",
         "loading": "Sedang memuat...",
-        "function_unavailable_in_inline_mode": "Fungsi ini tidak tersedia dalam mode inline"
+        "function_unavailable_in_inline_mode": "Fungsi ini tidak tersedia dalam mode inline",
+        "web_search_result": "Hasil pencarian web:",
+        "web_search_in_progress": "Mencari di web...",
+        "web_search_completed": "Pencarian web selesai"
     },
     "nl": {
         "help_description":"Toon uitleg",
@@ -473,7 +496,10 @@
         "answer_with_chatgpt":"Antwoord met ChatGPT",
         "ask_chatgpt":"Vraag ChatGPT",
         "loading":"Laden...",
-        "function_unavailable_in_inline_mode": "Deze functie is niet beschikbaar in de inline modus"
+        "function_unavailable_in_inline_mode": "Deze functie is niet beschikbaar in de inline modus",
+        "web_search_result":"Webzoekresultaat:",
+        "web_search_in_progress":"Zoeken op het web...",
+        "web_search_completed":"Webzoekopdracht voltooid"
     },
     "zh-cn": {
         "help_description":"显示帮助信息",
@@ -520,7 +546,10 @@
         "answer_with_chatgpt":"使用ChatGPT回答",
         "ask_chatgpt":"询问ChatGPT",
         "loading":"载入中...",
-        "function_unavailable_in_inline_mode": "此功能在内联模式下不可用"
+        "function_unavailable_in_inline_mode": "此功能在内联模式下不可用",
+        "web_search_result":"网络搜索结果：",
+        "web_search_in_progress":"正在搜索网络...",
+        "web_search_completed":"网络搜索完成"
     },
     "zh-tw": {
         "help_description":"顯示幫助訊息",
@@ -567,7 +596,10 @@
         "answer_with_chatgpt":"使用 ChatGPT 回答",
         "ask_chatgpt":"詢問 ChatGPT",
         "loading":"載入中...",
-        "function_unavailable_in_inline_mode": "此功能在內嵌模式下不可用"
+        "function_unavailable_in_inline_mode": "此功能在內嵌模式下不可用",
+        "web_search_result":"網路搜尋結果：",
+        "web_search_in_progress":"正在搜尋網路...",
+        "web_search_completed":"網路搜尋完成"
     },
     "vi": {
         "help_description":"Hiển thị trợ giúp",
@@ -614,7 +646,10 @@
         "answer_with_chatgpt":"Trả lời với ChatGPT",
         "ask_chatgpt":"Hỏi ChatGPT",
         "loading":"Đang tải...",
-        "function_unavailable_in_inline_mode": "Chức năng này không khả dụng trong chế độ nội tuyến"
+        "function_unavailable_in_inline_mode": "Chức năng này không khả dụng trong chế độ nội tuyến",
+        "web_search_result":"Kết quả tìm kiếm web:",
+        "web_search_in_progress":"Đang tìm kiếm trên web...",
+        "web_search_completed":"Tìm kiếm web hoàn tất"
     },
     "fa": {
         "help_description":"نمایش پیغام راهنما",
@@ -661,7 +696,10 @@
         "answer_with_chatgpt":"با ChatGPT پاسخ دهید",
         "ask_chatgpt":"از ChatGPT بپرسید",
         "loading":"در حال بارگذاری...",
-        "function_unavailable_in_inline_mode": "این عملکرد در حالت آنلاین در دسترس نیست"
+        "function_unavailable_in_inline_mode": "این عملکرد در حالت آنلاین در دسترس نیست",
+        "web_search_result":"نتیجه جستجوی وب:",
+        "web_search_in_progress":"در حال جستجو در وب...",
+        "web_search_completed":"جستجوی وب تکمیل شد"
     },
     "uk": {
         "help_description":"Показати повідомлення допомоги",
@@ -709,7 +747,9 @@
         "ask_chatgpt":"Запитати ChatGPT",
         "loading":"Завантаження...",
         "function_unavailable_in_inline_mode": "Ця функція недоступна в режимі Inline",
-        "web_search_result":"Здійснено пошук в інтернеті:"
+        "web_search_result":"Здійснено пошук в інтернеті:",
+        "web_search_in_progress":"Шукаю в інтернеті...",
+        "web_search_completed":"Пошук в інтернеті завершено"
     },
     "ms": {
         "help_description":"Lihat Mesej Bantuan",
@@ -756,7 +796,10 @@
         "answer_with_chatgpt":"Jawab dengan ChatGPT",
         "ask_chatgpt":"Tanya ChatGPT",
         "loading":"Memuatkan...",
-        "function_unavailable_in_inline_mode": "Fungsi ini tidak tersedia dalam mod sebaris"
+        "function_unavailable_in_inline_mode": "Fungsi ini tidak tersedia dalam mod sebaris",
+        "web_search_result":"Hasil carian web:",
+        "web_search_in_progress":"Mencari di web...",
+        "web_search_completed":"Carian web selesai"
     },
     "uz": {
         "help_description": "Yordam xabarini ko'rsatish",
@@ -803,7 +846,10 @@
         "answer_with_chatgpt": "ChatGPT bilan javob berish",
         "ask_chatgpt": "ChatGPTdan so'rash",
         "loading": "Yuklanmoqda...",
-        "function_unavailable_in_inline_mode": "Bu funksiya inline rejimida mavjud emas"
+        "function_unavailable_in_inline_mode": "Bu funksiya inline rejimida mavjud emas",
+        "web_search_result": "Veb qidiruv natijasi:",
+        "web_search_in_progress": "Vebda qidirilmoqda...",
+        "web_search_completed": "Veb qidiruv tugallandi"
     },
     "ar": {
         "help_description":"عرض رسالة المساعدة",
@@ -850,7 +896,10 @@
         "answer_with_chatgpt":"الإجابة بواسطة ChatGPT",
         "ask_chatgpt":"سؤال ChatGPT",
         "loading":"قيد التحميل...",
-        "function_unavailable_in_inline_mode": "هذه الوظيفة غير متوفرة في الوضع المضمن"
+        "function_unavailable_in_inline_mode": "هذه الوظيفة غير متوفرة في الوضع المضمن",
+        "web_search_result":"نتيجة البحث على الويب:",
+        "web_search_in_progress":"البحث على الويب...",
+        "web_search_completed":"اكتمل البحث على الويب"
     },
     "pl": {
         "help_description": "Pokaż wiadomości pomocnicze",
@@ -897,6 +946,9 @@
         "answer_with_chatgpt": "Odpowiedz z ChatGPT",
         "ask_chatgpt": "Zapytaj ChatGPT",
         "loading": "Ładowanie...",
-        "function_unavailable_in_inline_mode": "Ta funkcja jest niedostępna w trybie inline"
+        "function_unavailable_in_inline_mode": "Ta funkcja jest niedostępna w trybie inline",
+        "web_search_result": "Wynik wyszukiwania w sieci:",
+        "web_search_in_progress": "Wyszukiwanie w sieci...",
+        "web_search_completed": "Wyszukiwanie w sieci zakończone"
     }
 }

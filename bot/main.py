@@ -55,6 +55,7 @@ def main():
         'vision_detail': os.environ.get('VISION_DETAIL', 'auto'),
         'tts_model': os.environ.get('TTS_MODEL', 'tts-1'),
         'tts_voice': os.environ.get('TTS_VOICE', 'alloy'),
+        'enable_web_search': os.environ.get('ENABLE_WEB_SEARCH', 'true').lower() == 'true',
     }
 
     if os.environ.get('MONTHLY_USER_BUDGETS') is not None:
