@@ -17,6 +17,7 @@ class YouTubeAudioExtractorPlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "extract_youtube_audio",
             "description": "Extract audio from a YouTube video",
             "parameters": {

@@ -20,6 +20,7 @@ class WorldTimeApiPlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "worldtimeapi",
             "description": f"Get the current time from a given timezone",
             "parameters": {

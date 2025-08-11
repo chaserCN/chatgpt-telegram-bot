@@ -46,7 +46,8 @@
         "answer_with_chatgpt":"Answer with ChatGPT",
         "ask_chatgpt":"Ask ChatGPT",
         "loading":"Loading...",
-        "function_unavailable_in_inline_mode": "This function is unavailable in inline mode"
+        "function_unavailable_in_inline_mode": "This function is unavailable in inline mode",
+        "web_search_result":"Web search result:"
     },
     "es": {
         "help_description":"Muestra el mensaje de ayuda",
@@ -93,7 +94,8 @@
         "answer_with_chatgpt":"Responder con ChatGPT",
         "ask_chatgpt":"Preguntar a ChatGPT",
         "loading":"Cargando...",
-        "function_unavailable_in_inline_mode": "Esta función no está disponible en el modo inline"
+        "function_unavailable_in_inline_mode": "Esta función no está disponible en el modo inline",
+        "web_search_result":"Resultado de búsqueda web:"
     },
     "pt-br": {
         "help_description": "Mostra a mensagem de ajuda",
@@ -140,7 +142,8 @@
         "answer_with_chatgpt": "Responder com ChatGPT",
         "ask_chatgpt": "Perguntar ao ChatGPT",
         "loading": "Carregando...",
-        "function_unavailable_in_inline_mode": "Esta função não está disponível no modo inline"
+        "function_unavailable_in_inline_mode": "Esta função não está disponível no modo inline",
+        "web_search_result": "Resultado da pesquisa na web:"
     },
     "de": {
         "help_description":"Zeige die Hilfenachricht",
@@ -187,7 +190,8 @@
         "answer_with_chatgpt":"Antworte mit ChatGPT",
         "ask_chatgpt":"Frage ChatGPT",
         "loading":"Lade...",
-        "function_unavailable_in_inline_mode": "Diese Funktion ist im Inline-Modus nicht verfügbar"
+        "function_unavailable_in_inline_mode": "Diese Funktion ist im Inline-Modus nicht verfügbar",
+        "web_search_result":"Web-Suchergebnis:"
     },
     "fi": {
         "help_description":"Näytä ohjeet",
@@ -704,7 +708,8 @@
         "answer_with_chatgpt":"Відповідь за допомогою ChatGPT",
         "ask_chatgpt":"Запитати ChatGPT",
         "loading":"Завантаження...",
-        "function_unavailable_in_inline_mode": "Ця функція недоступна в режимі Inline"
+        "function_unavailable_in_inline_mode": "Ця функція недоступна в режимі Inline",
+        "web_search_result":"Здійснено пошук в інтернеті:"
     },
     "ms": {
         "help_description":"Lihat Mesej Bantuan",

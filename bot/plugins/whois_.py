@@ -13,6 +13,7 @@ class WhoisPlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "get_whois",
             "description": "Get whois registration and expiry information for a domain",
             "parameters": {

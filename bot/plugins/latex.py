@@ -7,7 +7,9 @@ from typing import Dict
 from urllib.error import HTTPError
 from cairosvg import svg2png
 from PIL import Image
-from .plugin import Plugin, generate_random_string
+
+from utils import random_file_name
+from .plugin import Plugin
 
 
 class LatexConverterPlugin(Plugin):
@@ -23,6 +25,7 @@ class LatexConverterPlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "transform_latex_to_image",
             "description": "Transform latex formula to an image. Input should be a valid LaTeX expression",
             "parameters": {
@@ -66,10 +69,7 @@ class LatexConverterPlugin(Plugin):
             return {'result': f"Unable to convert LaTeX: {e}"}
 
     def save_to_tmp_file(self, data):
-        if not os.path.exists("uploads/latex"):
-            os.makedirs("uploads/latex")
-
-        image_file_path = os.path.join("uploads/latex", f"{generate_random_string(15)}.png")
+        image_file_path = random_file_name("uploads/latex", "png")
 
         with open(image_file_path, 'wb') as file:
             # Write the byte string to the file

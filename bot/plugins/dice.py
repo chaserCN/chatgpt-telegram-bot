@@ -12,6 +12,7 @@ class DicePlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "send_dice",
             "description": "Send a dice in the chat, with a random number between 1 and 6",
             "parameters": {

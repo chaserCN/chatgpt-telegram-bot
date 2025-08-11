@@ -5,7 +5,7 @@ import json
 from dotenv import load_dotenv
 
 from plugin_manager import PluginManager
-from openai_helper import OpenAIHelper, default_max_tokens, are_functions_available
+from openai_helper2 import OpenAIHelper2
 from telegram_bot import ChatGPTTelegramBot
 
 
@@ -29,25 +29,20 @@ def main():
 
     # Setup configurations
     model = os.environ.get('OPENAI_MODEL', 'gpt-4o')
-    functions_available = are_functions_available(model=model)
-    max_tokens_default = default_max_tokens(model=model)
+
     openai_config = {
         'api_key': os.environ['OPENAI_API_KEY'],
-        'show_usage': os.environ.get('SHOW_USAGE', 'false').lower() == 'true',
         'stream': os.environ.get('STREAM', 'true').lower() == 'true',
         'proxy': os.environ.get('PROXY', None) or os.environ.get('OPENAI_PROXY', None),
         'max_history_size': int(os.environ.get('MAX_HISTORY_SIZE', 15)),
         'max_conversation_age_minutes': int(os.environ.get('MAX_CONVERSATION_AGE_MINUTES', 180)),
         'assistant_prompt': os.environ.get('ASSISTANT_PROMPT', 'You are a helpful assistant.'),
-        'max_tokens': int(os.environ.get('MAX_TOKENS', max_tokens_default)),
-        'n_choices': int(os.environ.get('N_CHOICES', 1)),
         'temperature': float(os.environ.get('TEMPERATURE', 1.0)),
         'image_model': os.environ.get('IMAGE_MODEL', 'dall-e-2'),
         'image_quality': os.environ.get('IMAGE_QUALITY', 'standard'),
         'image_style': os.environ.get('IMAGE_STYLE', 'vivid'),
         'image_size': os.environ.get('IMAGE_SIZE', '512x512'),
         'model': model,
-        'enable_functions': os.environ.get('ENABLE_FUNCTIONS', str(functions_available)).lower() == 'true',
         'functions_max_consecutive_calls': int(os.environ.get('FUNCTIONS_MAX_CONSECUTIVE_CALLS', 10)),
         'presence_penalty': float(os.environ.get('PRESENCE_PENALTY', 0.0)),
         'frequency_penalty': float(os.environ.get('FREQUENCY_PENALTY', 0.0)),
@@ -58,15 +53,10 @@ def main():
         'enable_vision_follow_up_questions': os.environ.get('ENABLE_VISION_FOLLOW_UP_QUESTIONS', 'true').lower() == 'true',
         'vision_prompt': os.environ.get('VISION_PROMPT', 'What is in this image'),
         'vision_detail': os.environ.get('VISION_DETAIL', 'auto'),
-        'vision_max_tokens': int(os.environ.get('VISION_MAX_TOKENS', max_tokens_default)),
         'tts_model': os.environ.get('TTS_MODEL', 'tts-1'),
         'tts_voice': os.environ.get('TTS_VOICE', 'alloy'),
     }
 
-    if openai_config['enable_functions'] and not functions_available:
-        logging.error(f'ENABLE_FUNCTIONS is set to true, but the model {model} does not support it. '
-                        f'Please set ENABLE_FUNCTIONS to false or use a model that supports it.')
-        exit(1)
     if os.environ.get('MONTHLY_USER_BUDGETS') is not None:
         logging.warning('The environment variable MONTHLY_USER_BUDGETS is deprecated. '
                         'Please use USER_BUDGETS with BUDGET_PERIOD instead.')
@@ -123,7 +113,7 @@ def main():
 
     # Setup and run ChatGPT and Telegram bot
     plugin_manager = PluginManager(config=plugin_config)
-    openai_helper = OpenAIHelper(config=openai_config, plugin_manager=plugin_manager)
+    openai_helper = OpenAIHelper2(config=openai_config, plugin_manager=plugin_manager)
     telegram_bot = ChatGPTTelegramBot(config=telegram_config, openai=openai_helper)
     telegram_bot.run()
 

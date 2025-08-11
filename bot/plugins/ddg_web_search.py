@@ -19,6 +19,7 @@ class DDGWebSearchPlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "web_search",
             "description": "Execute a web search for the given query and return a list of results",
             "parameters": {

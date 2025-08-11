@@ -1,8 +1,8 @@
 import os, random, string
 import imgkit
 from typing import Dict
-from .plugin import Plugin, generate_random_string
-
+from .plugin import Plugin
+from utils import random_file_name
 
 class Html2ImagePlugin(Plugin):
     """
@@ -17,6 +17,7 @@ class Html2ImagePlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "transform_html_to_image",
             "description": "Transform html to an image. Input should be a valid html",
             "parameters": {
@@ -29,7 +30,7 @@ class Html2ImagePlugin(Plugin):
         }]
 
     async def execute(self, function_name, helper, **kwargs) -> Dict:
-        image_file_path = self.tmp_file_path()
+        image_file_path = random_file_name("uploads/html", "png")
         imgkit.from_string(kwargs['inputHTML'], image_file_path)
 
         return {
@@ -39,9 +40,3 @@ class Html2ImagePlugin(Plugin):
                 'value': image_file_path
             }
         }
-
-    def tmp_file_path(self):
-        if not os.path.exists("uploads/html"):
-            os.makedirs("uploads/html")
-
-        return os.path.join("uploads/html", f"{generate_random_string(15)}.png")

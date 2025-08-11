@@ -18,10 +18,9 @@ from PIL import Image
 
 from utils import is_group_chat, get_thread_id, message_text, wrap_with_indicator, split_into_chunks, \
     edit_message_with_retry, get_stream_cutoff_values, is_allowed, get_remaining_budget, is_admin, is_within_budget, \
-    get_reply_to_message_id, add_chat_request_to_usage_tracker, error_handler, is_direct_result, handle_direct_result, \
-    cleanup_intermediate_files, send_action_periodically
-from openai_helper import OpenAIHelper, localized_text
-from usage_tracker import UsageTracker
+    get_reply_to_message_id, error_handler, is_direct_result, handle_direct_result, \
+    cleanup_intermediate_files, send_action_periodically, localized_text
+from openai_helper2 import OpenAIHelper2
 
 
 class ChatGPTTelegramBot:
@@ -29,7 +28,7 @@ class ChatGPTTelegramBot:
     Class representing a ChatGPT Telegram Bot.
     """
 
-    def __init__(self, config: dict, openai: OpenAIHelper):
+    def __init__(self, config: dict, openai: OpenAIHelper2):
         """
         Initializes the bot with the given configuration and GPT bot object.
         :param config: A dictionary containing the bot configuration
@@ -40,9 +39,7 @@ class ChatGPTTelegramBot:
         bot_language = self.config['bot_language']
         self.commands = [
             BotCommand(command='help', description=localized_text('help_description', bot_language)),
-            BotCommand(command='reset', description=localized_text('reset_description', bot_language)),
-            BotCommand(command='stats', description=localized_text('stats_description', bot_language)),
-            BotCommand(command='resend', description=localized_text('resend_description', bot_language))
+            BotCommand(command='reset', description=localized_text('reset_description', bot_language))
         ]
         # If imaging is enabled, add the "image" command to the list
         if self.config.get('enable_image_generation', False):
@@ -56,7 +53,6 @@ class ChatGPTTelegramBot:
         )] + self.commands
         self.disallowed_message = localized_text('disallowed', bot_language)
         self.budget_limit_message = localized_text('budget_limit', bot_language)
-        self.usage = {}
         self.last_message = {}
         self.inline_queries_cache = {}
 
@@ -89,140 +85,6 @@ class ChatGPTTelegramBot:
                 localized_text('help_text', bot_language)[2]
         )
         await update.message.reply_text(help_text, disable_web_page_preview=True)
-
-    async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """
-        Returns token usage statistics for current day and month.
-        """
-        if not await is_allowed(self.config, update, context):
-            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
-                            f'is not allowed to request their usage statistics')
-            await self.send_disallowed_message(update, context)
-            return
-
-        logging.info(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
-                     f'requested their usage statistics')
-
-        user_id = update.message.from_user.id
-        if user_id not in self.usage:
-            self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
-
-        tokens_today, tokens_month = self.usage[user_id].get_current_token_usage()
-        images_today, images_month = self.usage[user_id].get_current_image_count()
-        (transcribe_minutes_today, transcribe_seconds_today, transcribe_minutes_month,
-         transcribe_seconds_month) = self.usage[user_id].get_current_transcription_duration()
-        vision_today, vision_month = self.usage[user_id].get_current_vision_tokens()
-        characters_today, characters_month = self.usage[user_id].get_current_tts_usage()
-        current_cost = self.usage[user_id].get_current_cost()
-
-        chat_id = update.effective_chat.id
-        chat_messages, chat_token_length = self.openai.get_conversation_stats(chat_id)
-        remaining_budget = get_remaining_budget(self.config, self.usage, update)
-        bot_language = self.config['bot_language']
-        
-        text_current_conversation = (
-            f"*{localized_text('stats_conversation', bot_language)[0]}*:\n"
-            f"{chat_messages} {localized_text('stats_conversation', bot_language)[1]}\n"
-            f"{chat_token_length} {localized_text('stats_conversation', bot_language)[2]}\n"
-            f"----------------------------\n"
-        )
-        
-        # Check if image generation is enabled and, if so, generate the image statistics for today
-        text_today_images = ""
-        if self.config.get('enable_image_generation', False):
-            text_today_images = f"{images_today} {localized_text('stats_images', bot_language)}\n"
-
-        text_today_vision = ""
-        if self.config.get('enable_vision', False):
-            text_today_vision = f"{vision_today} {localized_text('stats_vision', bot_language)}\n"
-
-        text_today_tts = ""
-        if self.config.get('enable_tts_generation', False):
-            text_today_tts = f"{characters_today} {localized_text('stats_tts', bot_language)}\n"
-        
-        text_today = (
-            f"*{localized_text('usage_today', bot_language)}:*\n"
-            f"{tokens_today} {localized_text('stats_tokens', bot_language)}\n"
-            f"{text_today_images}"  # Include the image statistics for today if applicable
-            f"{text_today_vision}"
-            f"{text_today_tts}"
-            f"{transcribe_minutes_today} {localized_text('stats_transcribe', bot_language)[0]} "
-            f"{transcribe_seconds_today} {localized_text('stats_transcribe', bot_language)[1]}\n"
-            f"{localized_text('stats_total', bot_language)}{current_cost['cost_today']:.2f}\n"
-            f"----------------------------\n"
-        )
-        
-        text_month_images = ""
-        if self.config.get('enable_image_generation', False):
-            text_month_images = f"{images_month} {localized_text('stats_images', bot_language)}\n"
-
-        text_month_vision = ""
-        if self.config.get('enable_vision', False):
-            text_month_vision = f"{vision_month} {localized_text('stats_vision', bot_language)}\n"
-
-        text_month_tts = ""
-        if self.config.get('enable_tts_generation', False):
-            text_month_tts = f"{characters_month} {localized_text('stats_tts', bot_language)}\n"
-        
-        # Check if image generation is enabled and, if so, generate the image statistics for the month
-        text_month = (
-            f"*{localized_text('usage_month', bot_language)}:*\n"
-            f"{tokens_month} {localized_text('stats_tokens', bot_language)}\n"
-            f"{text_month_images}"  # Include the image statistics for the month if applicable
-            f"{text_month_vision}"
-            f"{text_month_tts}"
-            f"{transcribe_minutes_month} {localized_text('stats_transcribe', bot_language)[0]} "
-            f"{transcribe_seconds_month} {localized_text('stats_transcribe', bot_language)[1]}\n"
-            f"{localized_text('stats_total', bot_language)}{current_cost['cost_month']:.2f}"
-        )
-
-        # text_budget filled with conditional content
-        text_budget = "\n\n"
-        budget_period = self.config['budget_period']
-        if remaining_budget < float('inf'):
-            text_budget += (
-                f"{localized_text('stats_budget', bot_language)}"
-                f"{localized_text(budget_period, bot_language)}: "
-                f"${remaining_budget:.2f}.\n"
-            )
-        # No longer works as of July 21st 2023, as OpenAI has removed the billing API
-        # add OpenAI account information for admin request
-        # if is_admin(self.config, user_id):
-        #     text_budget += (
-        #         f"{localized_text('stats_openai', bot_language)}"
-        #         f"{self.openai.get_billing_current_month():.2f}"
-        #     )
-
-        usage_text = text_current_conversation + text_today + text_month + text_budget
-        await update.message.reply_text(usage_text, parse_mode=constants.ParseMode.MARKDOWN)
-
-    async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """
-        Resend the last request
-        """
-        if not await is_allowed(self.config, update, context):
-            logging.warning(f'User {update.message.from_user.name}  (id: {update.message.from_user.id})'
-                            f' is not allowed to resend the message')
-            await self.send_disallowed_message(update, context)
-            return
-
-        chat_id = update.effective_chat.id
-        if chat_id not in self.last_message:
-            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id})'
-                            f' does not have anything to resend')
-            await update.effective_message.reply_text(
-                message_thread_id=get_thread_id(update),
-                text=localized_text('resend_failed', self.config['bot_language'])
-            )
-            return
-
-        # Update message text, clear self.last_message and send the request to prompt
-        logging.info(f'Resending the last prompt from user: {update.message.from_user.name} '
-                     f'(id: {update.message.from_user.id})')
-        with update.message._unfrozen() as message:
-            message.text = self.last_message.pop(chat_id)
-
-        await self.prompt(update=update, context=context)
 
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -279,12 +141,6 @@ class ChatGPTTelegramBot:
                     )
                 else:
                     raise Exception(f"env variable IMAGE_RECEIVE_MODE has invalid value {self.config['image_receive_mode']}")
-                # add image request to users usage tracker
-                user_id = update.message.from_user.id
-                self.usage[user_id].add_image_request(image_size, self.config['image_prices'])
-                # add guest chat request to guest usage tracker
-                if str(user_id) not in self.config['allowed_user_ids'].split(',') and 'guests' in self.usage:
-                    self.usage["guests"].add_image_request(image_size, self.config['image_prices'])
 
             except Exception as e:
                 logging.exception(e)
@@ -325,12 +181,6 @@ class ChatGPTTelegramBot:
                     voice=speech_file
                 )
                 speech_file.close()
-                # add image request to users usage tracker
-                user_id = update.message.from_user.id
-                self.usage[user_id].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
-                # add guest chat request to guest usage tracker
-                if str(user_id) not in self.config['allowed_user_ids'].split(',') and 'guests' in self.usage:
-                    self.usage["guests"].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
 
             except Exception as e:
                 logging.exception(e)
@@ -396,18 +246,8 @@ class ChatGPTTelegramBot:
             user_id = update.message.from_user.id
             user_name = self._get_user_name_for_api(user_id=user_id, telegram_user_name=update.message.from_user.name)
 
-            if user_id not in self.usage:
-                self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
-
             try:
                 transcript = await self.openai.transcribe(filename_mp3)
-
-                transcription_price = self.config['transcription_price']
-                self.usage[user_id].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
-
-                allowed_user_ids = self.config['allowed_user_ids'].split(',')
-                if str(user_id) not in allowed_user_ids and 'guests' in self.usage:
-                    self.usage["guests"].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
 
                 # check if transcript starts with any of the prefixes
                 response_to_transcription = any(transcript.lower().startswith(prefix.lower()) if prefix else False
@@ -429,13 +269,14 @@ class ChatGPTTelegramBot:
                 else:
                     # Get the response of the transcript
 
-                    response, total_tokens = await self.openai.get_chat_response(
+                    response = await self.openai.get_chat_response(
                         chat_id=chat_id, query=transcript, user_name=user_name
                     )
 
-                    self.usage[user_id].add_chat_tokens(total_tokens, self.config['token_price'])
-                    if str(user_id) not in allowed_user_ids and 'guests' in self.usage:
-                        self.usage["guests"].add_chat_tokens(total_tokens, self.config['token_price'])
+                    # Handle direct_result (e.g., images)
+                    if is_direct_result(response):
+                        await handle_direct_result(self.config, update, response)
+                        return
 
                     # Split into chunks of 4096 characters (Telegram's message limit)
                     transcript_output = (
@@ -544,9 +385,6 @@ class ChatGPTTelegramBot:
             user_id = update.message.from_user.id
             user_name = self._get_user_name_for_api(user_id=user_id, telegram_user_name=update.message.from_user.name)
             
-            if user_id not in self.usage:
-                self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
-
             if self.config['stream']:
 
                 stream_response = self.openai.interpret_image_stream(
@@ -558,7 +396,7 @@ class ChatGPTTelegramBot:
                 backoff = 0
                 stream_chunk = 0
 
-                async for content, tokens in stream_response:
+                async for content, is_finished in stream_response:
                     if is_direct_result(content):
                         return await handle_direct_result(self.config, update, content)
 
@@ -600,11 +438,11 @@ class ChatGPTTelegramBot:
                         except:
                             continue
 
-                    elif abs(len(content) - len(prev)) > cutoff or tokens != 'not_finished':
+                    elif abs(len(content) - len(prev)) > cutoff or is_finished:
                         prev = content
 
                         try:
-                            use_markdown = tokens != 'not_finished'
+                            use_markdown = is_finished
                             await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
                                                           text=content, markdown=use_markdown)
 
@@ -625,17 +463,17 @@ class ChatGPTTelegramBot:
                         await asyncio.sleep(0.01)
 
                     i += 1
-                    if tokens != 'not_finished':
-                        total_tokens = int(tokens)
 
                 
             else:
 
                 try:
-                    interpretation, total_tokens = await self.openai.interpret_image(
+                    interpretation = await self.openai.interpret_image(
                         chat_id, temp_file_png, self.config.get('user_names_dict', {}).get(str(user_id), update.message.from_user.name), prompt=prompt
                     )
 
+                    if is_direct_result(interpretation):
+                        return await handle_direct_result(self.config, update, interpretation)
 
                     try:
                         await update.effective_message.reply_text(
@@ -667,12 +505,6 @@ class ChatGPTTelegramBot:
                         text=f"{localized_text('vision_fail', bot_language)}: {str(e)}",
                         parse_mode=constants.ParseMode.MARKDOWN
                     )
-            vision_token_price = self.config['vision_token_price']
-            self.usage[user_id].add_vision_tokens(total_tokens, vision_token_price)
-
-            allowed_user_ids = self.config['allowed_user_ids'].split(',')
-            if str(user_id) not in allowed_user_ids and 'guests' in self.usage:
-                self.usage["guests"].add_vision_tokens(total_tokens, vision_token_price)
 
         await wrap_with_indicator(update, context, _execute, constants.ChatAction.TYPING)
 
@@ -750,12 +582,8 @@ class ChatGPTTelegramBot:
         )
 
         try:
-            total_tokens = 0
-
             if self.config['stream']:
                 async def _reply():
-                    nonlocal total_tokens
-
                     response_stream = self.openai.get_chat_response_stream(
                         chat_id=chat_id, user_name=user_name_for_api, query=prompt
                     )
@@ -765,7 +593,7 @@ class ChatGPTTelegramBot:
                     backoff = 0
                     stream_chunk = 0
 
-                    async for content, tokens in response_stream:
+                    async for content, is_finished in response_stream:
                         sending_task.cancel()
 
                         if is_direct_result(content):
@@ -809,11 +637,11 @@ class ChatGPTTelegramBot:
                             except:
                                 continue
 
-                        elif abs(len(content) - len(prev)) > cutoff or tokens != 'not_finished':
+                        elif abs(len(content) - len(prev)) > cutoff or is_finished:
                             prev = content
 
                             try:
-                                use_markdown = tokens != 'not_finished'
+                                use_markdown = is_finished
                                 await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
                                                               text=content, markdown=use_markdown)
 
@@ -834,15 +662,12 @@ class ChatGPTTelegramBot:
                             await asyncio.sleep(0.01)
 
                         i += 1
-                        if tokens != 'not_finished':
-                            total_tokens = int(tokens)
 
                 await _reply()
 
             else:
                 async def _reply():
-                    nonlocal total_tokens
-                    response, total_tokens = await self.openai.get_chat_response(
+                    response = await self.openai.get_chat_response(
                         chat_id=chat_id, user_name=user_name_for_api, query=prompt
                     )
 
@@ -873,8 +698,6 @@ class ChatGPTTelegramBot:
                                 raise exception
 
                 await _reply()
-
-            add_chat_request_to_usage_tracker(self.usage, self.config, user_id, total_tokens)
 
         except Exception as e:
             logging.exception(e)
@@ -939,6 +762,7 @@ class ChatGPTTelegramBot:
         """
         callback_data = update.callback_query.data
         user_id = update.callback_query.from_user.id
+        user_name = self._get_user_name_for_api(user_id=user_id, telegram_user_name=update.message.from_user.name)
         inline_message_id = update.callback_query.inline_message_id
         name = update.callback_query.from_user.name
         callback_data_suffix = "gpt:"
@@ -950,7 +774,6 @@ class ChatGPTTelegramBot:
         try:
             if callback_data.startswith(callback_data_suffix):
                 unique_id = callback_data.split(':')[1]
-                total_tokens = 0
 
                 # Retrieve the prompt from the cache
                 query = self.inline_queries_cache.get(unique_id)
@@ -968,11 +791,11 @@ class ChatGPTTelegramBot:
 
                 unavailable_message = localized_text("function_unavailable_in_inline_mode", bot_language)
                 if self.config['stream']:
-                    stream_response = self.openai.get_chat_response_stream(chat_id=user_id, query=query)
+                    stream_response = self.openai.get_chat_response_stream(chat_id=user_id, query=query, user_name=user_name)
                     i = 0
                     prev = ''
                     backoff = 0
-                    async for content, tokens in stream_response:
+                    async for content, is_finished in stream_response:
                         if is_direct_result(content):
                             cleanup_intermediate_files(content)
                             await edit_message_with_retry(context, chat_id=None,
@@ -996,10 +819,10 @@ class ChatGPTTelegramBot:
                             except:
                                 continue
 
-                        elif abs(len(content) - len(prev)) > cutoff or tokens != 'not_finished':
+                        elif abs(len(content) - len(prev)) > cutoff or is_finished:
                             prev = content
                             try:
-                                use_markdown = tokens != 'not_finished'
+                                use_markdown = is_finished
                                 divider = '_' if use_markdown else ''
                                 text = f'{query}\n\n{divider}{answer_tr}:{divider}\n{content}'
 
@@ -1024,19 +847,16 @@ class ChatGPTTelegramBot:
                             await asyncio.sleep(0.01)
 
                         i += 1
-                        if tokens != 'not_finished':
-                            total_tokens = int(tokens)
 
                 else:
                     async def _send_inline_query_response():
-                        nonlocal total_tokens
                         # Edit the current message to indicate that the answer is being processed
                         await context.bot.edit_message_text(inline_message_id=inline_message_id,
                                                             text=f'{query}\n\n_{answer_tr}:_\n{loading_tr}',
                                                             parse_mode=constants.ParseMode.MARKDOWN)
 
                         logging.info(f'Generating response for inline query by {name}')
-                        response, total_tokens = await self.openai.get_chat_response(chat_id=user_id, query=query)
+                        response = await self.openai.get_chat_response(chat_id=user_id, query=query, user_name=user_name)
 
                         if is_direct_result(response):
                             cleanup_intermediate_files(response)
@@ -1057,8 +877,6 @@ class ChatGPTTelegramBot:
 
                     await wrap_with_indicator(update, context, _send_inline_query_response,
                                               constants.ChatAction.TYPING, is_inline=True)
-
-                add_chat_request_to_usage_tracker(self.usage, self.config, user_id, total_tokens)
 
         except Exception as e:
             logging.error(f'Failed to respond to an inline query via button callback: {e}')
@@ -1083,10 +901,6 @@ class ChatGPTTelegramBot:
         if not await is_allowed(self.config, update, context, is_inline=is_inline):
             logging.warning(f'User {name} (id: {user_id}) is not allowed to use the bot')
             await self.send_disallowed_message(update, context, is_inline)
-            return False
-        if not is_within_budget(self.config, self.usage, update, is_inline=is_inline):
-            logging.warning(f'User {name} (id: {user_id}) reached their usage limit')
-            await self.send_budget_reached_message(update, context, is_inline)
             return False
 
         return True
@@ -1142,8 +956,6 @@ class ChatGPTTelegramBot:
         application.add_handler(CommandHandler('image', self.image))
         application.add_handler(CommandHandler('tts', self.tts))
         application.add_handler(CommandHandler('start', self.help))
-        application.add_handler(CommandHandler('stats', self.stats))
-        application.add_handler(CommandHandler('resend', self.resend))
         application.add_handler(CommandHandler(
             'chat', self.prompt, filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP)
         )

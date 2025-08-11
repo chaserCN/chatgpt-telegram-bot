@@ -20,6 +20,7 @@ class DDGImageSearchPlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "search_images",
             "description": "Search image or GIFs for a given query",
             "parameters": {

@@ -24,6 +24,7 @@ class WeatherPlugin(Plugin):
         }
         return [
             {
+                "type": "function",
                 "name": "get_current_weather",
                 "description": "Get the current weather for a location using Open Meteo APIs.",
                 "parameters": {
@@ -37,6 +38,7 @@ class WeatherPlugin(Plugin):
                 },
             },
             {
+                "type": "function",
                 "name": "get_forecast_weather",
                 "description": "Get daily weather forecast for a location using Open Meteo APIs."
                                f"Today is {datetime.today().strftime('%A, %B %d, %Y')}",

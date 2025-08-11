@@ -15,6 +15,7 @@ class CryptoPlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "get_crypto_rate",
             "description": "Get the current rate of various crypto currencies",
             "parameters": {

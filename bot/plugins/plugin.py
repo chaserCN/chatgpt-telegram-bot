@@ -1,3 +1,4 @@
+import os
 import string, random
 from abc import abstractmethod, ABC
 from typing import Dict
@@ -37,6 +38,3 @@ class Plugin(ABC):
         """
         pass
 
-def generate_random_string(length):
-    characters = string.ascii_letters + string.digits
-    return ''.join(random.choice(characters) for _ in range(length))

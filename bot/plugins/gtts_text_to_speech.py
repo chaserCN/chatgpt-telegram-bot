@@ -16,6 +16,7 @@ class GTTSTextToSpeech(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "google_translate_text_to_speech",
             "description": "Translate text to speech using Google Translate's Text to Speech API",
             "parameters": {

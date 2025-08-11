@@ -6,12 +6,39 @@ import json
 import logging
 import os
 import base64
+import random
+import string
 
 import telegram
 from telegram import Message, MessageEntity, Update, ChatMember, constants
 from telegram.ext import CallbackContext, ContextTypes
 
 from usage_tracker import UsageTracker
+
+
+# Load translations
+parent_dir_path = os.path.join(os.path.dirname(__file__), os.pardir)
+translations_file_path = os.path.join(parent_dir_path, 'translations.json')
+with open(translations_file_path, 'r', encoding='utf-8') as f:
+    translations = json.load(f)
+
+def localized_text(key, bot_language):
+    """
+    Return translated text for a key in specified bot_language.
+    Keys and translations can be found in the translations.json.
+    """
+    try:
+        return translations[bot_language][key]
+    except KeyError:
+        logging.warning(f"No translation available for bot_language code '{bot_language}' and key '{key}'")
+        # Fallback to English if the translation is not available
+        if key in translations['en']:
+            return translations['en'][key]
+        else:
+            logging.warning(f"No english definition found for key '{key}' in translations.json")
+            # return key as text
+            return key
+
 
 
 def message_text(message: Message) -> str:
@@ -285,29 +312,6 @@ def is_within_budget(config, usage, update: Update, is_inline=False) -> bool:
     return remaining_budget > 0
 
 
-def add_chat_request_to_usage_tracker(usage, config, user_id, used_tokens):
-    """
-    Add chat request to usage tracker
-    :param usage: The usage tracker object
-    :param config: The bot configuration object
-    :param user_id: The user id
-    :param used_tokens: The number of tokens used
-    """
-    try:
-        if int(used_tokens) == 0:
-            logging.warning('No tokens used. Not adding chat request to usage tracker.')
-            return
-        # add chat request to users usage tracker
-        usage[user_id].add_chat_tokens(used_tokens, config['token_price'])
-        # add guest chat request to guest usage tracker
-        allowed_user_ids = config['allowed_user_ids'].split(',')
-        if str(user_id) not in allowed_user_ids and 'guests' in usage:
-            usage["guests"].add_chat_tokens(used_tokens, config['token_price'])
-    except Exception as e:
-        logging.warning(f'Failed to add tokens to usage_logs: {str(e)}')
-        pass
-
-
 def get_reply_to_message_id(config, update: Update):
     """
     Returns the message id of the message to reply to
@@ -334,6 +338,29 @@ def is_direct_result(response: any) -> bool:
             return False
     else:
         return response.get('direct_result', False)
+
+
+def direct_result_kind(response: any) -> str:
+    """
+    Returns the kind of direct_result from response.
+    Returns 'result' if not a direct_result or kind not found.
+    :param response: The response value
+    :return: String indicating the kind of direct result
+    """
+    if isinstance(response, dict) and 'direct_result' in response:
+        return response['direct_result'].get('kind', 'result')
+    
+    # Handle case when response is a string (JSON)
+    if isinstance(response, str):
+        try:
+            json_response = json.loads(response)
+            if 'direct_result' in json_response:
+                return json_response['direct_result'].get('kind', 'result')
+        except:
+            pass
+    
+    return 'result'
+
 
 
 async def handle_direct_result(config, update: Update, response: any):
@@ -394,3 +421,13 @@ def encode_image(fileobj):
 def decode_image(imgbase64):
     image = imgbase64[len('data:image/jpeg;base64,'):]
     return base64.b64decode(image)
+
+def generate_random_string(length):
+    characters = string.ascii_letters + string.digits
+    return ''.join(random.choice(characters) for _ in range(length))
+
+def random_file_name(directory_name, extension):
+    if not os.path.exists(directory_name):
+        os.makedirs(directory_name)
+    return os.path.join(directory_name, f"{generate_random_string(15)}.{extension}")
+

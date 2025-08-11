@@ -14,6 +14,7 @@ class DDGTranslatePlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [{
+            "type": "function",
             "name": "translate",
             "description": "Translate a given text from a language to another",
             "parameters": {

@@ -50,6 +50,7 @@ class SpotifyPlugin(Plugin):
         }
         return [
             {
+                "type": "function",
                 "name": "spotify_get_currently_playing_song",
                 "description": "Get the user's currently playing song",
                 "parameters": {
@@ -58,6 +59,7 @@ class SpotifyPlugin(Plugin):
                 }
             },
             {
+                "type": "function",
                 "name": "spotify_get_users_top_artists",
                 "description": "Get the user's top listened artists",
                 "parameters": {
@@ -69,6 +71,7 @@ class SpotifyPlugin(Plugin):
                 }
             },
             {
+                "type": "function",
                 "name": "spotify_get_users_top_tracks",
                 "description": "Get the user's top listened tracks",
                 "parameters": {
@@ -80,6 +83,7 @@ class SpotifyPlugin(Plugin):
                 }
             },
             {
+                "type": "function",
                 "name": "spotify_search_by_query",
                 "description": "Search spotify content by query",
                 "parameters": {
@@ -95,6 +99,7 @@ class SpotifyPlugin(Plugin):
                 }
             },
             {
+                "type": "function",
                 "name": "spotify_lookup_by_id",
                 "description": "Lookup spotify content by id",
                 "parameters": {
