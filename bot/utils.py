@@ -15,6 +15,13 @@ from telegram.ext import CallbackContext, ContextTypes
 
 from usage_tracker import UsageTracker
 
+try:
+    from rich import print as rprint
+    from rich.pretty import pprint
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+
 
 # Load translations
 parent_dir_path = os.path.join(os.path.dirname(__file__), os.pardir)
@@ -430,4 +437,18 @@ def random_file_name(directory_name, extension):
     if not os.path.exists(directory_name):
         os.makedirs(directory_name)
     return os.path.join(directory_name, f"{generate_random_string(15)}.{extension}")
+
+def print_object(title, obj):
+    """
+    Print an object in a clean format using rich if available, otherwise JSON
+    """
+    obj_data = {attr: getattr(obj, attr, None) for attr in dir(obj) 
+                if not attr.startswith('_') and not attr.startswith('model_') and not callable(getattr(obj, attr, None))}
+    
+    if RICH_AVAILABLE:
+        print(title)
+        pprint(obj_data)
+    else:
+        print(f"{title}: {json.dumps(obj_data, indent=2, ensure_ascii=False, default=str)}")
+
 

@@ -2,8 +2,12 @@ from __future__ import annotations
 import datetime
 import logging
 import base64
+import warnings
 
 import openai
+
+# Filter out Pydantic field shadowing warnings
+warnings.filterwarnings('ignore', message='Field name.*shadows an attribute')
 
 import json
 import httpx
@@ -11,7 +15,7 @@ import io
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 from plugin_manager import PluginManager
-from utils import is_direct_result, direct_result_kind, localized_text, random_file_name
+from utils import is_direct_result, direct_result_kind, localized_text, print_object, random_file_name
 
 # Константи
 MULTIUSER_CHAT_INSTRUCTIONS = "You are in a multiuser chat. To distinguish users, messages begin with 'Username says:'.\n\n"
@@ -140,20 +144,17 @@ class OpenAIHelper2:
         if stream:
             final_tool_calls = {}
             response_id = None
-            
+
             async for event in response:
-                if response_id is None and hasattr(event, 'response_id'):
-                    response_id = event.response_id
+                if response_id is None and hasattr(event, 'response') and hasattr(event.response, 'id'):
+                    response_id = event.response.id
+                    print_object("__handle_function_call response_id!!!:", response_id)
                 
                 if event.type == 'response.output_item.added':
                     if event.item.type == 'function_call':
                         final_tool_calls[event.output_index] = event.item
                     else:
                         return response, plugins_used
-                elif event.type == 'response.function_call_arguments.delta':
-                    index = event.output_index
-                    if index in final_tool_calls:
-                        final_tool_calls[index].arguments += event.delta
                 elif event.type == 'response.function_call_arguments.done':
                     index = event.output_index
                     if index in final_tool_calls:
