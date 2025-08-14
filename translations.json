@@ -49,7 +49,8 @@
         "function_unavailable_in_inline_mode": "This function is unavailable in inline mode",
         "web_search_result":"Web search result:",
         "web_search_in_progress":"Searching the web...",
-        "web_search_completed":"Web search completed"
+        "web_search_completed":"Web search completed",
+        "empty_response":"No response received from the AI model"
     },
     "es": {
         "help_description":"Muestra el mensaje de ayuda",
@@ -99,7 +100,8 @@
         "function_unavailable_in_inline_mode": "Esta función no está disponible en el modo inline",
         "web_search_result":"Resultado de búsqueda web:",
         "web_search_in_progress":"Buscando en la web...",
-        "web_search_completed":"Búsqueda web completada"
+        "web_search_completed":"Búsqueda web completada",
+        "empty_response":"No se recibió respuesta del modelo de IA"
     },
     "pt-br": {
         "help_description": "Mostra a mensagem de ajuda",
@@ -149,7 +151,8 @@
         "function_unavailable_in_inline_mode": "Esta função não está disponível no modo inline",
         "web_search_result": "Resultado da pesquisa na web:",
         "web_search_in_progress": "Pesquisando na web...",
-        "web_search_completed": "Pesquisa na web concluída"
+        "web_search_completed": "Pesquisa na web concluída",
+        "empty_response": "Nenhuma resposta recebida do modelo de IA"
     },
     "de": {
         "help_description":"Zeige die Hilfenachricht",
@@ -299,7 +302,8 @@
         "function_unavailable_in_inline_mode": "Эта функция недоступна в режиме inline",
         "web_search_result":"Результат поиска в интернете:",
         "web_search_in_progress":"Ищу в интернете...",
-        "web_search_completed":"Поиск в интернете завершен"
+        "web_search_completed":"Поиск в интернете завершен",
+        "empty_response":"Ответ от ИИ модели не получен"
     },
     "tr": {
         "help_description":"Yardım mesajını göster",
@@ -749,7 +753,8 @@
         "function_unavailable_in_inline_mode": "Ця функція недоступна в режимі Inline",
         "web_search_result":"Здійснено пошук в інтернеті:",
         "web_search_in_progress":"Шукаю в інтернеті...",
-        "web_search_completed":"Пошук в інтернеті завершено"
+        "web_search_completed":"Пошук в інтернеті завершено",
+        "empty_response":"Відповідь від ШІ моделі не отримано"
     },
     "ms": {
         "help_description":"Lihat Mesej Bantuan",

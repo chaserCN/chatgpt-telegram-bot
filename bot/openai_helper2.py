@@ -39,9 +39,9 @@ class OpenAIHelper2:
     #########################################################
 
     async def get_chat_response(self, chat_id: int, query: str, user_name: str | None) -> Dict | str:
-        response = await self.__send_query(chat_id, query, user_name)    
+        response = await self.__send_query(chat_id, query, user_name, stream=False)    
 
-        new_response, plugins_used = await self.__handle_function_call(chat_id, response, stream=False, times=1, plugins_used=())
+        new_response, plugins_used = await self.__handle_function_call(chat_id, response, stream=False)
         if is_direct_result(new_response):
             return new_response
 
@@ -52,11 +52,12 @@ class OpenAIHelper2:
 
         return result
 
-    async def get_chat_response_stream(self, chat_id: int, query: str, user_name: str | None) -> tuple[str, bool, bool]:
+    async def get_chat_response_stream(self, chat_id: int, query: str, user_name: str | None) -> tuple[str, bool]:
         response = await self.__send_query(chat_id, query, user_name, stream=True)
+        
         response, plugins_used = await self.__handle_function_call(chat_id, response, stream=True)
         if is_direct_result(response):
-            yield response, True, True
+            yield response, True
             return
 
         answer = ''
@@ -64,7 +65,7 @@ class OpenAIHelper2:
         async for event in response:
             if event.type == 'response.output_text.delta':
                 answer += event.delta
-                yield answer, False, False
+                yield answer, False
                 
             elif event.type == 'response.completed':
                 self.last_response_ids[chat_id] = event.response.id
@@ -72,14 +73,14 @@ class OpenAIHelper2:
                 result = await self.__process_nonfunction_response(event.response)
                 result = self.__add_plugins_info(result, plugins_used)
 
-                yield result, True, True
+                yield result, True
                 return
                 
             elif event.type == 'response.web_search_call.in_progress' or event.type == 'response.web_search_call.searching':
-                yield answer + f"\n🔍 _{localized_text('web_search_in_progress', self.config['bot_language'])}_", False, True
+                yield answer + f"\n🔍 _{localized_text('web_search_in_progress', self.config['bot_language'])}_", False
                 
             elif event.type == 'response.web_search_call.completed':
-                yield answer + f"\n✅ _{localized_text('web_search_completed', self.config['bot_language'])}_", False, True
+                yield answer + f"\n✅ _{localized_text('web_search_completed', self.config['bot_language'])}_", False
 
             elif event.type == 'error':
                 raise Exception(f"Streaming error: {event.error}")
@@ -88,7 +89,7 @@ class OpenAIHelper2:
         answer = answer.strip()
         result = self.__add_plugins_info(answer, plugins_used)
 
-        yield result, True, True
+        yield result, True
 
     @retry(
         reraise=True,
@@ -139,7 +140,7 @@ class OpenAIHelper2:
         except Exception as e:
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
-    async def __handle_function_call(self, chat_id, response, stream=False, times=0, plugins_used=()):
+    async def __handle_function_call(self, chat_id, response, stream=False, times=1, plugins_used=()):
         logging.info(f"__handle_function_call: chat_id={chat_id}, stream={stream}, times={times}, plugins_used={plugins_used}")
         if stream:
             final_tool_calls = {}
