@@ -280,7 +280,7 @@ class OpenAIHelper2:
         has_web_search = any(output.type == "web_search_call" for output in response.output or [])
         if has_web_search:
             web_search_prefix = localized_text('web_search_result', self.config['bot_language'])
-            answer = f"_{web_search_prefix}_\n\n{answer}"
+            answer = f"<i>{web_search_prefix}</i>\n\n{answer}"
         
         return answer
 
@@ -403,7 +403,7 @@ class OpenAIHelper2:
                 self.last_response_ids[chat_id] = None
             self.last_updated[chat_id] = datetime.datetime.now()
 
-            prompt = self.config['vision_prompt'] if prompt is None else prompt
+            prompt = self.config['vision_prompt'] if prompt is None or prompt.strip() == "" else prompt
             if user_name:
                 prompt = f"{user_name} says: {prompt}"
 
@@ -413,7 +413,7 @@ class OpenAIHelper2:
                        {"type": "input_image", "image_url": f'data:image/jpeg;base64,{base64_image}'}]
 
             common_args = {
-                'model': self.config['vision_model'],
+                'model': self.config['model'],
                 'input': [{"role":"user", "content":content}],
                 'stream': stream
             }

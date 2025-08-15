@@ -55,18 +55,10 @@ class ChatGPTTelegramBot:
         self.budget_limit_message = localized_text('budget_limit', bot_language)
         self.last_message = {}
         self.inline_queries_cache = {}
-
-    def _get_user_name_for_api(self, user_id: int, telegram_user_name: str) -> str:
-            """Gets the user name to be sent to OpenAI API.
-            Looks up in user_names_dict config, falls back to telegram name.
-            """
-            user_name = self.config.get('user_names_dict', {}).get(str(user_id))
-            if user_name is None:
-                logging.debug(f"User ID {user_id} not in USER_NAMES_DICT, using Telegram name: {telegram_user_name}")
-                return telegram_user_name
-            else:
-                logging.debug(f"Using name '{user_name}' from USER_NAMES_DICT for user ID {user_id}")
-                return user_name
+        
+        # Initialize addressing words
+        addressing_words_str = self.config.get('bot_addressing_words', '')
+        self._addressing_words = [word.strip().lower() for word in addressing_words_str.split(',') if word.strip()]
 
     async def help(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """
@@ -327,6 +319,7 @@ class ChatGPTTelegramBot:
                 logging.info(f'Vision coming from group chat, ignoring...')
                 return
 
+            # Check ignore keyword first
             ignore_keyword = self.config['group_ignore_keyword']
             if (prompt and
                     ignore_keyword and
@@ -334,14 +327,14 @@ class ChatGPTTelegramBot:
                 logging.info(f'Vision coming from group chat, starts with the ignore keyword, ignoring...')
                 return
 
-            trigger_keyword = self.config['group_trigger_keyword']
-            if (prompt is None and trigger_keyword != '') or \
-               (prompt is not None and not prompt.lower().startswith(trigger_keyword.lower())):
-                logging.info(f'Vision coming from group chat with wrong keyword, ignoring...')
+            # Check if we should respond to this message
+            should_respond, cleaned_prompt = self._should_respond_to_message(prompt or "")
+            if not should_respond:
+                logging.info(f'Vision coming from group chat, no trigger keyword or addressing words, ignoring...')
                 return
-        
+            prompt = cleaned_prompt
+
         image = update.message.effective_attachment[-1]
-        
 
         async def _execute():
             bot_language = self.config['bot_language']
@@ -551,7 +544,6 @@ class ChatGPTTelegramBot:
 
         if is_group_chat(update):
             ignore_keyword = self.config['group_ignore_keyword']
-            trigger_keyword = self.config['group_trigger_keyword']
 
             full_prompt = update.message.text.lower().strip()
 
@@ -561,9 +553,12 @@ class ChatGPTTelegramBot:
                 logging.info('Message starts with the ignore keyword, ignoring...')
                 return
 
-            if prompt.lower().startswith(trigger_keyword.lower()) or full_prompt.startswith('/chat'):
-                if prompt.lower().startswith(trigger_keyword.lower()):
-                    prompt = prompt[len(trigger_keyword):].strip()
+            # Check if bot should respond and get cleaned prompt
+            should_respond, cleaned_prompt = self._should_respond_to_message(prompt)
+            
+            if should_respond or full_prompt.startswith('/chat'):
+                if should_respond:
+                    prompt = cleaned_prompt
 
                 if update.message.reply_to_message and \
                         update.message.reply_to_message.text and \
@@ -573,7 +568,7 @@ class ChatGPTTelegramBot:
                 if update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id:
                     logging.info('Message is a reply to the bot, allowing...')
                 else:
-                    logging.warning('Message does not start with trigger keyword, ignoring...')
+                    logging.warning('Message does not start with trigger keyword or addressing words, ignoring...')
                     return
 
         sending_task = context.application.create_task(
@@ -976,3 +971,45 @@ class ChatGPTTelegramBot:
         application.add_error_handler(error_handler)
 
         application.run_polling()
+
+    def _get_user_name_for_api(self, user_id: int, telegram_user_name: str) -> str:
+            """Gets the user name to be sent to OpenAI API.
+            Looks up in user_names_dict config, falls back to telegram name.
+            """
+            user_name = self.config.get('user_names_dict', {}).get(str(user_id))
+            if user_name is None:
+                logging.debug(f"User ID {user_id} not in USER_NAMES_DICT, using Telegram name: {telegram_user_name}")
+                return telegram_user_name
+            else:
+                logging.debug(f"Using name '{user_name}' from USER_NAMES_DICT for user ID {user_id}")
+                return user_name
+
+    def _should_respond_to_message(self, message_text: str) -> tuple[bool, str]:
+        """
+        Check if bot should respond to message and return cleaned prompt
+        :param message_text: Original message text
+        :return: Tuple of (should_respond, cleaned_prompt)
+        """
+        if not message_text:
+            return False, ""
+        
+        text_lower = message_text.lower().strip()
+        
+        # Check trigger keyword (e.g., "!bot")
+        trigger_keyword = self.config.get('group_trigger_keyword', '').lower()
+        if trigger_keyword and text_lower.startswith(trigger_keyword):
+            # Check if followed by space or end of string to avoid false matches
+            if len(text_lower) == len(trigger_keyword) or text_lower[len(trigger_keyword)] in [' ', '\n', '\t', ',', '.', '!', '?']:
+                cleaned_prompt = message_text[len(trigger_keyword):].strip()
+                return True, cleaned_prompt
+        
+        # Check addressing words (e.g., "боты", "боти", "yall")
+        addressing_words = self._addressing_words
+        for word in addressing_words:
+            if text_lower.startswith(word):
+                # Check if followed by space or end of string to avoid false matches
+                if len(text_lower) == len(word) or text_lower[len(word)] in [' ', '\n', '\t', ',', '.', '!', '?']:
+                    cleaned_prompt = message_text[len(word):].strip()
+                    return True, cleaned_prompt
+        
+        return False, message_text

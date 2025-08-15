@@ -2,6 +2,7 @@ import logging
 import os
 import json
 import warnings
+import argparse
 
 from dotenv import load_dotenv
 
@@ -14,16 +15,34 @@ from googleai import GoogleAIHelper
 from telegram_bot import ChatGPTTelegramBot
 
 
-def main():
-    # Read .env file
-    load_dotenv()
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='Telegram Bot with AI support')
+    parser.add_argument('-e', '--env', 
+                       help='Path to .env file (default: .env in project root)',
+                       default='.env')
+    return parser.parse_args()
 
-    # Setup logging
+
+def main():
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Read .env file
+    env_file = args.env
+    if not os.path.isabs(env_file):
+        # If relative path, make it relative to project root (parent of bot directory)
+        env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), env_file)
+    
+    # Setup logging first
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    
+    logging.info(f'[MAIN] Loading .env file: {env_file}')
+    load_dotenv(env_file)
 
     # Check if the required environment variables are set
     ai_provider = os.environ.get('AI_PROVIDER', 'openai').lower()
@@ -117,6 +136,7 @@ def main():
         'enable_transcription': os.environ.get('ENABLE_TRANSCRIPTION', 'true').lower() == 'true',
         'enable_vision': os.environ.get('ENABLE_VISION', 'true').lower() == 'true',
         'enable_tts_generation': os.environ.get('ENABLE_TTS_GENERATION', 'true').lower() == 'true',
+        'bot_addressing_words': os.environ.get('BOT_ADDRESSING_WORDS', ''),
         'budget_period': os.environ.get('BUDGET_PERIOD', 'monthly').lower(),
         'user_budgets': os.environ.get('USER_BUDGETS', os.environ.get('MONTHLY_USER_BUDGETS', '*')),
         'guest_budget': float(os.environ.get('GUEST_BUDGET', os.environ.get('MONTHLY_GUEST_BUDGET', '100.0'))),

@@ -46,6 +46,8 @@ class GoogleAIHelper:
         user_content = types.Content(
             role=role.value, parts=[types.Part(text=content)]
         )
+        if chat_id not in self.conversations or not self.conversations[chat_id]:
+            self.conversations[chat_id] = []
 
         self.conversations[chat_id].append(user_content)
 
@@ -188,7 +190,7 @@ class GoogleAIHelper:
         if has_grounding:
             logging.info(f'[NON-STREAM] Adding grounding prefix')
             grounding_prefix = localized_text('web_search_result', self.config['bot_language'])
-            answer = f"_{grounding_prefix}_\n\n{answer}"
+            answer = f"<i>{grounding_prefix}</i>\n\n{answer}"
         
         # Add to history
         self.__add_to_history(chat_id, role=Role.MODEL, content=answer)
@@ -216,7 +218,7 @@ class GoogleAIHelper:
             if found_grounding and not has_grounding:
                 logging.info(f'[STREAM] Grounding found in chunk {chunk_count}, adding prefix')
                 grounding_prefix = localized_text('web_search_result', self.config['bot_language'])
-                answer = f"_{grounding_prefix}_\n\n{answer}"
+                answer = f"<i>{grounding_prefix}</i>\n\n{answer}"
 
             has_grounding |= found_grounding
 
@@ -265,7 +267,7 @@ class GoogleAIHelper:
     def reset_conversation(self, chat_id: int):
         """Reset the conversation history for a specific chat"""
         if chat_id in self.conversations:
-            del self.conversations[chat_id]
+            self.conversations[chat_id] = []
         if chat_id in self.last_updated:
             del self.last_updated[chat_id]
 
@@ -299,7 +301,7 @@ class GoogleAIHelper:
     async def __send_vision_query(self, chat_id: int, fileobj, user_name: str | None, prompt=None, stream=False):
         bot_language = self.config['bot_language']
         try:
-            prompt = self.config['vision_prompt'] if prompt is None else prompt
+            prompt = self.config['vision_prompt'] if prompt is None or prompt.strip() == "" else prompt
             if user_name:
                 prompt = f"{user_name}: {prompt}"
 
@@ -317,7 +319,7 @@ class GoogleAIHelper:
             # Send vision request using simple API
             if stream:
                 response = await self.client.aio.models.generate_content_stream(
-                    model=self.config.get('vision_model', self.config['model']),
+                    model=self.config['model'],
                     contents=contents
                 )
             else:
