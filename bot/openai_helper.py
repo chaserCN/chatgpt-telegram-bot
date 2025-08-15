@@ -3,10 +3,14 @@ import datetime
 import logging
 import os
 import re
+import warnings
 
 import tiktoken
 
 import openai
+
+# Filter out Pydantic field shadowing warnings
+warnings.filterwarnings('ignore', message='Field name.*shadows an attribute')
 
 import requests
 import json
@@ -17,6 +21,13 @@ from calendar import monthrange
 from PIL import Image
 
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+
+try:
+    from rich import print as rprint
+    from rich.pretty import pprint
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
 
 from plugins.plugin import Plugin
 from utils import is_direct_result, encode_image, decode_image, localized_text
@@ -33,7 +44,7 @@ class OpenAIHelper:
         :param config: A dictionary containing the GPT configuration
         :param plugin_manager: The plugin manager
         """
-        http_client = httpx.AsyncClient(proxies=config['proxy']) if 'proxy' in config else None
+        http_client = None
         self.client = openai.AsyncOpenAI(api_key=config['api_key'], http_client=http_client)
         self.config = config
         self.plugin_manager = plugin_manager
@@ -125,7 +136,11 @@ class OpenAIHelper:
                 'stream': stream
             }
 
-            print(f"common_args: {json.dumps(common_args, indent=2,ensure_ascii=False)}")
+            if RICH_AVAILABLE:
+                print("common_args:")
+                pprint(common_args)
+            else:
+                print(f"common_args: {json.dumps(common_args, indent=2,ensure_ascii=False)}")
 
             functions = self.plugin_manager.get_functions_specs()
             if len(functions) > 0:
@@ -299,7 +314,11 @@ class OpenAIHelper:
                 'stream': stream
             }
 
-            print(f"common_args: {json.dumps(common_args, indent=2, ensure_ascii=False)}")
+            if RICH_AVAILABLE:
+                print("common_args:")
+                pprint(common_args)
+            else:
+                print(f"common_args: {json.dumps(common_args, indent=2, ensure_ascii=False)}")
 
             # vision model does not yet support functions
 

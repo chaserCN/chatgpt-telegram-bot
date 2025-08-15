@@ -2,88 +2,180 @@ from __future__ import annotations
 import datetime
 import logging
 import base64
-import json
-import traceback
+import io
+import wave
+import subprocess
+import tempfile
+import os
+from enum import Enum
+from typing import Dict
 
 from google import genai
 from google.genai import types
-import httpx
 import io
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
 
 from plugin_manager import PluginManager
 from utils import is_direct_result, direct_result_kind, localized_text, print_object, random_file_name
+from constants import MULTIUSER_CHAT_INSTRUCTIONS
 
-# Константи
-MULTIUSER_CHAT_INSTRUCTIONS = system_instruction = """
-You are a helpful and friendly assistant in a group chat with multiple users.
-Users will prefix their messages with their name and a colon (e.g., 'Alice:').
-When you respond, be aware of who said what. You can address users by their name if it's natural to do so.
-Keep your answers concise and helpful.
-"""
+console = Console()
+
+class Role(Enum):
+    USER = "user"
+    MODEL = "model"
 
 class GoogleAIHelper:
     def __init__(self, config: dict, plugin_manager: PluginManager):
         self.client = genai.Client()
         self.config = config
         self.plugin_manager = plugin_manager
-        self.last_updated: dict[int: datetime] = {}  
-        self.chats: dict[int: any] = {} 
+        self.conversations: dict[int: list] = {}  # {chat_id: conversation_history}
+        self.last_updated: dict[int: datetime] = {}  # {chat_id: last_update_timestamp} 
 
-    async def __get_or_create_chat(self, chat_id: int):
-        if chat_id not in self.chats:
-            system_prompt = MULTIUSER_CHAT_INSTRUCTIONS
-            if 'assistant_prompt' in self.config and self.config['assistant_prompt']:
-                system_prompt += self.config['assistant_prompt']
+    def reset_chat_history(self, chat_id: int, content=''):
+        """Reset the conversation history for a specific chat"""
+        self.conversations[chat_id] = []
 
-            grounding_tool = types.Tool(
-                google_search=types.GoogleSearch()
+    def __add_to_history(self, chat_id: int, role: Role, content: str):
+        """Add a message to the conversation history"""
+
+        user_content = types.Content(
+            role=role.value, parts=[types.Part(text=content)]
+        )
+
+        self.conversations[chat_id].append(user_content)
+
+    def __print_history_colored(self, chat_id: int):
+        """Print conversation history with colors"""
+        if chat_id not in self.conversations:
+            console.print("[red]No conversation history found[/red]")
+            return
+            
+        history = self.conversations[chat_id]
+        if not history:
+            console.print("[yellow]Empty conversation history[/yellow]")
+            return
+            
+        console.print(f"\n[bold cyan]Conversation History (chat_id: {chat_id}):[/bold cyan]")
+        
+        for i, msg in enumerate(history):
+            role = msg.role
+            content = msg.parts[0].text if msg.parts else "No content"
+            
+            # Color coding based on role
+            if role == "user":
+                role_color = "[bold green]"
+                content_color = "[green]"
+            elif role == "model":
+                role_color = "[bold blue]"
+                content_color = "[blue]"
+            else:
+                role_color = "[bold white]"
+                content_color = "[white]"
+                
+            # Truncate content for display
+            display_content = content[:100] + "..." if len(content) > 100 else content
+            
+            panel = Panel(
+                Text(display_content, style=content_color),
+                title=f"{role_color}{role.upper()}[/{role_color[1:]} (#{i+1})",
+                border_style="dim"
             )
+            console.print(panel)
 
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                tools=[grounding_tool],
-                 safety_settings=[
-                    types.SafetySetting(
-                        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-                    ),
-                    types.SafetySetting(
-                        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-                    ),
-                    types.SafetySetting(
-                        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-                    ),
-                    types.SafetySetting(
-                        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-                    ),
-                ]
-            )
-            self.chats[chat_id] = self.client.aio.chats.create(model=self.config['model'], config=config)
-       
-        return self.chats[chat_id]
-
-    def __reset_chat_history(self, chat_id: int):
-        if chat_id in self.chats:
-            del self.chats[chat_id]
+    def __max_age_reached(self, chat_id: int) -> bool:
+        """Check if the maximum conversation age has been reached"""
+        if chat_id not in self.last_updated:
+            return True
+        age = datetime.datetime.now() - self.last_updated[chat_id]
+        return age.total_seconds() > self.config['max_conversation_age_minutes'] * 60
 
     #########################################################
     # Chat model
     #########################################################
 
     async def get_chat_response(self, chat_id: int, query: str, user_name: str | None) -> Dict | str:
-        logging.info(f'[NON-STREAM] Starting get_chat_response: chat_id={chat_id}, query="{query[:50]}..."')
+        logging.info(f'[NON-STREAM] Starting get_chat_response: chat_id={chat_id}, query="{query[:50]}..."')        
         
         response = await self.__send_query(chat_id, query, user_name, stream=False)    
+        
+        return await self.__process_nonstreaming_response(response, chat_id)
 
-        # new_response, plugins_used = await self.__handle_function_call(chat_id, response, stream=False)
-        # if is_direct_result(new_response):
-        #     logging.info(f'Direct result: {direct_result_kind(new_response)}')
-        #     return new_response
+    async def get_chat_response_stream(self, chat_id: int, query: str, user_name: str | None) -> tuple[str, bool]:
+        logging.info(f'[STREAM] Starting get_chat_response_stream: chat_id={chat_id}, query="{query[:50]}..."')
 
+        response = await self.__send_query(chat_id, query, user_name, stream=True)
+        
+        async for answer, is_final in self.__process_streaming_response(response, chat_id):
+            yield answer, is_final
+
+    # @retry(
+    #     reraise=True,
+    #     retry=retry_if_exception_type(Exception),
+    #     wait=wait_fixed(20),
+    #     stop=stop_after_attempt(3)
+    # )
+    async def __send_query(self, chat_id: int, query: str, user_name: str | None, stream=False):
+        bot_language = self.config['bot_language']
+        try:
+            if chat_id not in self.conversations or self.__max_age_reached(chat_id):
+                self.reset_chat_history(chat_id)
+
+            self.last_updated[chat_id] = datetime.datetime.now()
+
+            if user_name:
+                query = f"{user_name}: {query}"
+
+            self.__add_to_history(chat_id, role=Role.USER, content=query)
+
+            instructions = MULTIUSER_CHAT_INSTRUCTIONS
+            if 'assistant_prompt' in self.config and self.config['assistant_prompt']:
+                instructions += self.config['assistant_prompt']
+
+            tools = self.__tools_for_request()
+            
+            config = types.GenerateContentConfig(system_instruction=instructions, tools=tools)
+
+            console.print(f"[bold yellow]🚀 [SEND] API request:[/bold yellow] [cyan]model={self.config['model']}, stream={stream}, history_length={len(self.conversations[chat_id])}[/cyan]")
+            logging.info(f'[SEND] API request: model={self.config["model"]}, stream={stream}, history_length={len(self.conversations[chat_id])}')
+            self.__print_history_colored(chat_id)
+
+            if stream:
+                response = await self.client.aio.models.generate_content_stream(
+                    model=self.config['model'],
+                    contents=self.conversations[chat_id],
+                    config=config
+                )
+            else:
+                response = await self.client.aio.models.generate_content(
+                    model=self.config['model'],
+                    contents=self.conversations[chat_id],
+                    config=config
+                )
+
+            logging.info(f'[SEND] Response received: type={type(response).__name__}')
+            return response
+
+        except Exception as e:
+            logging.error(f'[SEND] General error: {str(e)}')
+            raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
+
+    def __tools_for_request(self) -> list[types.Tool]:
+        if self.config.get('enable_web_search', True):
+            grounding_tool = types.Tool(
+                google_search=types.GoogleSearch()
+            )
+            return [grounding_tool]
+
+        return None
+
+    async def __process_nonstreaming_response(self, response, chat_id: int) -> str:
+        print_object("[NON-STREAM] Response:", response)
+        
         answer, has_grounding, _ = self.__process_nonfunction_response(response, check_grounding=True)
         answer = answer or ""
         
@@ -97,24 +189,21 @@ class GoogleAIHelper:
             logging.info(f'[NON-STREAM] Adding grounding prefix')
             grounding_prefix = localized_text('web_search_result', self.config['bot_language'])
             answer = f"_{grounding_prefix}_\n\n{answer}"
-            
-        #result = self.__add_plugins_info(result, plugins_used)
         
-        logging.info(f'[NON-STREAM] Final result: length={len(answer)}')
-        print_object("Result:", answer)
+        # Add to history
+        self.__add_to_history(chat_id, role=Role.MODEL, content=answer)
+        
+        console.print(f"[bold green]✅ [NON-STREAM] Final result:[/bold green] [cyan]length={len(answer)}[/cyan]")
 
         return answer
 
-    async def get_chat_response_stream(self, chat_id: int, query: str, user_name: str | None) -> tuple[str, bool]:
-        logging.info(f'[STREAM] Starting get_chat_response_stream: chat_id={chat_id}, query="{query[:50]}..."')
-        
-        response = await self.__send_query(chat_id, query, user_name, stream=True)
-        
-        # response, plugins_used = await self.__handle_function_call(chat_id, response, stream=True)
-        # if is_direct_result(response):
-        #     yield response, True, True
-        #     return
-
+    async def __process_streaming_response(self, response, chat_id: int) -> tuple[str, bool]:
+        """
+        Process streaming response and yield chunks with final status
+        :param response: The streaming response from Google AI
+        :param chat_id: Chat ID for history management
+        :yield: Tuple of (answer, is_final)
+        """
         answer = ''
         has_grounding = False
         chunk_count = 0
@@ -140,82 +229,18 @@ class GoogleAIHelper:
                 else:
                     logging.info(f'[STREAM] Final chunk {chunk_count} received')
 
-
+        console.print(f"[bold blue]🔄 [STREAM] Streaming completed:[/bold blue] [cyan]chunks={chunk_count}, response_length={len(str(answer))}[/cyan]")
         logging.info(f'[STREAM] Streaming completed: chunks={chunk_count}, response_length={len(str(answer))}')
 
-        #result = self.__add_plugins_info(answer, plugins_used)
-        
         # Check if answer is not empty
         if not answer.strip():
-            logging.warning(f'[STREAM] Empty response detected, trying non-streaming retry')
+            logging.warning(f'[STREAM] Empty response detected')
             answer = localized_text('empty_response', self.config['bot_language'])
-            # Try one more time with non-streaming response
-            try:
-                logging.info(f'[STREAM] Attempting non-streaming retry')
-                retry_response = await self.get_chat_response(chat_id, query, user_name)
-                if retry_response and retry_response.strip():
-                    logging.info(f'[STREAM] Retry successful: length={len(retry_response)}')
-                    answer = retry_response
-                else:
-                    logging.warning(f'[STREAM] Retry also returned empty response')
-            except Exception as e:
-                logging.error(f'[STREAM] Retry failed: {str(e)}')
-        else:
-            logging.info(f'[STREAM] Final answer ready: length={len(answer)}')
+        
+        # Add to history for all responses
+        self.__add_to_history(chat_id, role=Role.MODEL, content=answer)
         
         yield answer, True
-
-    @retry(
-        reraise=True,
-        retry=retry_if_exception_type(Exception),
-        wait=wait_fixed(20),
-        stop=stop_after_attempt(3)
-    )
-    async def __send_query(self, chat_id: int, query: str, user_name: str | None, stream=False):
-        bot_language = self.config['bot_language']
-        try:
-            if self.__max_age_reached(chat_id):
-                self.__reset_chat_history(chat_id)
-
-            self.last_updated[chat_id] = datetime.datetime.now()
-
-            if user_name:
-                query = f"{user_name}: {query}"
-
-            # Log the API request
-            logging.info(f'API request: model={self.config["model"]}, query="{query}", stream={stream}')
-
-            # Get or create chat session
-            chat = await self.__get_or_create_chat(chat_id)
-            
-            # Send message using chat API
-            if stream:
-                response = await chat.send_message_stream(query)
-            else:
-                response = await chat.send_message(query)
-
-            print_object("Response:", response)
-
-            return response
-
-        except Exception as e:
-            logging.error(f'General error: {str(e)}')
-            raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
-
-    async def __handle_function_call(self, chat_id, response, stream=False, times=0, plugins_used=()):
-        logging.info(f"__handle_function_call: chat_id={chat_id}, stream={stream}, times={times}, plugins_used={plugins_used}")
-        
-        # Log function call handling
-        logging.info(f'Function call handling: stream={stream}, times={times}, plugins_used={plugins_used}')
-        
-        # Google AI doesn't have built-in function calling like OpenAI, so we'll implement a basic version
-        # For now, we'll just return the response as-is
-        return response, plugins_used
-
-    async def __execute_function_calls(self, chat_id, function_calls, stream, times, plugins_used, response_id):
-        # Google AI doesn't have built-in function calling, so this is a placeholder
-        logging.info(f"__execute_function_calls: chat_id={chat_id}, function_calls_count={len(function_calls)}, stream={stream}, times={times}, response_id={response_id}")
-        return response_id, plugins_used
 
     def __process_nonfunction_response(self, response, check_grounding: bool) -> tuple[str | None, bool, bool]:
         answer = response.text
@@ -231,44 +256,16 @@ class GoogleAIHelper:
                                candidate.grounding_metadata and 
                                hasattr(candidate.grounding_metadata, 'web_search_queries') and 
                                candidate.grounding_metadata.web_search_queries is not None)
-                if has_grounding:
-                    logging.info(f'[PROCESS] Grounding metadata found: {candidate.grounding_metadata.web_search_queries}')
             
             if hasattr(candidate, 'finish_reason') and candidate.finish_reason == 'STOP':
                 is_final = True
-                logging.info(f'[PROCESS] Final chunk detected (STOP)')
 
-        logging.info(f'[PROCESS] Processed: text_length={len(answer) if answer else 0}, has_grounding={has_grounding}, is_final={is_final}')
         return answer, has_grounding, is_final
-
-    def __add_plugins_info(self, result, plugins_used):
-        if isinstance(result, str) and len(plugins_used) > 0 and self.config['show_plugins_used']:
-            plugin_names = tuple(
-                self.plugin_manager.get_plugin_source_name_with_icon(plugin) for plugin in plugins_used)
-            result += f"\n\n---\n{', '.join(plugin_names)}"
-        
-        return result
-
-    def __tools_for_request(self) -> Dict:
-        # Google AI doesn't have tools like OpenAI, so return empty list
-        return []
-
-    def __max_age_reached(self, chat_id) -> bool:
-        if chat_id not in self.last_updated:
-            return True
-        age = datetime.datetime.now() - self.last_updated[chat_id]
-        max_age_reached = age.total_seconds() > self.config['max_conversation_age_minutes'] * 60
-        
-        # Clear chat session if max age is reached
-        if max_age_reached and chat_id in self.chats:
-            del self.chats[chat_id]
-        
-        return max_age_reached
 
     def reset_conversation(self, chat_id: int):
         """Reset the conversation history for a specific chat"""
-        if chat_id in self.chats:
-            del self.chats[chat_id]
+        if chat_id in self.conversations:
+            del self.conversations[chat_id]
         if chat_id in self.last_updated:
             del self.last_updated[chat_id]
 
@@ -278,45 +275,20 @@ class GoogleAIHelper:
 
     async def interpret_image(self, chat_id: int, fileobj, user_name: str | None, prompt=None) -> str | Dict:
         # Log vision request
-        logging.info(f'Vision request: prompt="{prompt}", user_name={user_name}')
+        logging.info(f'[VISION] Vision request: prompt="{prompt}", user_name={user_name}')
         
         response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt)
 
-        answer = await self.__process_nonfunction_response(response)
-        self.last_response_ids[chat_id] = str(id(response))
-        
-        # Log vision response
-        logging.info(f'Vision response: response_length={len(answer)}')
-
-        return answer
+        return await self.__process_nonstreaming_response(response, chat_id)
 
     async def interpret_image_stream(self, chat_id: int, fileobj, user_name: str | None, prompt=None) -> tuple[str, bool, bool]:
         # Log streaming vision request
-        logging.info(f'Streaming vision request: prompt="{prompt}", user_name={user_name}')
+        logging.info(f'[VISION] Starting interpret_image_stream: prompt="{prompt}", user_name={user_name}')
         
         response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=True)
-
-        answer = ''
-
-        for chunk in response:
-            # Log streaming vision events with full chunk data
-            chunk_data = {
-                'has_text': hasattr(chunk, 'text'),
-                'text_length': len(chunk.text) if hasattr(chunk, 'text') else 0,
-                'full_chunk': str(chunk),
-                'chunk_type': type(chunk).__name__,
-                'chunk_attributes': {attr: getattr(chunk, attr, None) for attr in dir(chunk) if not attr.startswith('_')}
-            }
-            logging.info(f'Vision streaming chunk: {chunk_data}')
-            
-            if hasattr(chunk, 'text') and chunk.text:
-                answer += chunk.text
-                yield answer, False, False
-
-        # Log completed streaming vision response
-        logging.info(f'Vision streaming completed: response_length={len(str(answer))}')
         
-        yield answer, True, True
+        async for answer, is_final in self.__process_streaming_response(response, chat_id):
+            yield answer, is_final, is_final
 
     @retry(
         reraise=True,
@@ -327,49 +299,40 @@ class GoogleAIHelper:
     async def __send_vision_query(self, chat_id: int, fileobj, user_name: str | None, prompt=None, stream=False):
         bot_language = self.config['bot_language']
         try:
-            if self.__max_age_reached(chat_id):
-                self.last_response_ids[chat_id] = None
-            self.last_updated[chat_id] = datetime.datetime.now()
-
             prompt = self.config['vision_prompt'] if prompt is None else prompt
             if user_name:
-                prompt = f"{user_name} says: {prompt}"
+                prompt = f"{user_name}: {prompt}"
 
             # Log vision API request
-            logging.info(f'Vision API request: model={self.config.get("vision_model", self.config["model"])}, prompt="{prompt}", stream={stream}')
+            logging.info(f'[VISION] Vision API request: model={self.config.get("vision_model", self.config["model"])}, prompt="{prompt}", stream={stream}')
 
-            # Create image part
-            image_part = {
-                "mime_type": "image/png",
-                "data": fileobj.getvalue()
-            }
+            contents=[
+                types.Part.from_bytes(
+                    data=fileobj.getvalue(),
+                    mime_type='image/png',
+                ),
+                prompt
+            ]
 
-            # Send vision request using new API
+            # Send vision request using simple API
             if stream:
-                response = self.client.models.generate_content_stream(
+                response = await self.client.aio.models.generate_content_stream(
                     model=self.config.get('vision_model', self.config['model']),
-                    contents=[prompt, image_part]
+                    contents=contents
                 )
             else:
-                response = self.client.models.generate_content(
+                response = await self.client.aio.models.generate_content(
                     model=self.config.get('vision_model', self.config['model']),
-                    contents=[prompt, image_part]
+                    contents=contents
                 )
 
-            # Log vision API response with full response data
-            response_data = {
-                'response_id': str(id(response)),
-                'response_type': 'success',
-                'response_object': str(response),
-                'response_type_name': type(response).__name__,
-                'response_attributes': {attr: getattr(response, attr, None) for attr in dir(response) if not attr.startswith('_')}
-            }
-            logging.info(f'Vision API response: {response_data}')
-            
+            logging.info(f'[VISION] Response received: type={type(response).__name__}')
+            print_object('[VISION] Response:', response)
+
             return response
 
         except Exception as e:
-            logging.error(f'Vision general error: {str(e)}')
+            logging.error(f'[VISION] Vision general error: {str(e)}')
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
     #########################################################
@@ -380,14 +343,44 @@ class GoogleAIHelper:
         bot_language = self.config['bot_language']
         try:
             # Log image generation request
-            logging.info(f'Image generation request: prompt="{prompt}", model=gemini-pro-vision')
+            logging.info(f'[IMAGE] Image generation request: prompt="{prompt}", model=imagen-4.0-generate-001')
             
-            # Google AI doesn't have a dedicated image generation API like DALL-E
-            # This is a placeholder - you might need to use a different service
-            raise Exception("Image generation is not supported with Google AI. Please use a different service like DALL-E or Stable Diffusion.")
+            response = await self.client.aio.models.generate_images(
+                model=self.config.get('image_model', 'imagen-4.0-generate-001'),
+                prompt=prompt,
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                )
+            )
+
+            if not response.generated_images or len(response.generated_images) == 0:
+                logging.error(f'[IMAGE] No images generated: {str(response)}')
+                raise Exception(
+                    f"⚠️ _{localized_text('error', bot_language)}._ "
+                    f"⚠️\n{localized_text('try_again', bot_language)}."
+                )
+
+            # Get the first generated image
+            generated_image = response.generated_images[0]
+            
+            if generated_image.image.image_bytes is not None:
+                image_data = generated_image.image.image_bytes
+                image_data = base64.b64decode(image_data)
+                temp_filename = random_file_name('uploads', 'png')
+                
+                with open(temp_filename, 'wb') as f:
+                    f.write(image_data)
+                
+                return temp_filename, "1024x1024"
+                    
+            elif generated_image.image.gcs_uri is not None:
+                return generated_image.image.gcs_uri, "1024x1024"
+                
+            else:
+                raise Exception("No image data received from Google AI")
             
         except Exception as e:
-            logging.error(f'Image generation error: {str(e)}')
+            logging.error(f'[IMAGE] Image generation error: {str(e)}')
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
     #########################################################
@@ -402,24 +395,124 @@ class GoogleAIHelper:
         """
         bot_language = self.config['bot_language']
         try:
-            # Google AI doesn't have built-in TTS like OpenAI
-            # This is a placeholder - you might need to use a different service
-            raise Exception("Text-to-speech is not supported with Google AI. Please use a different service like OpenAI TTS or Google Cloud TTS.")
+            # Log TTS generation request
+            logging.info(f'[TTS] TTS generation request: text="{text[:50]}...", model=gemini-2.5-flash-preview-tts')
+            
+            response = await self.client.aio.models.generate_content(
+                model=self.config.get('tts_model', 'gemini-2.5-flash-preview-tts'),
+                contents=text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=self.config.get('tts_voice', 'Kore'),
+                            )
+                        )
+                    ),
+                )
+            )
+
+            if not response.candidates or len(response.candidates) == 0:
+                logging.error(f'[TTS] No response from Google AI: {str(response)}')
+                raise Exception(
+                    f"⚠️ _{localized_text('error', bot_language)}._ "
+                    f"⚠️\n{localized_text('try_again', bot_language)}."
+                )
+
+            # Get audio data and decode base64
+            audio_data = response.candidates[0].content.parts[0].inline_data.data
+            import base64
+            audio_data = base64.b64decode(audio_data)
+            
+            # Convert PCM to Opus for Telegram compatibility
+            # Create temporary WAV file
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as wav_file:
+                with wave.open(wav_file.name, 'wb') as wf:
+                    wf.setnchannels(1)  # Mono
+                    wf.setsampwidth(2)  # 16-bit
+                    wf.setframerate(24000)  # 24kHz
+                    wf.writeframes(audio_data)
+                
+                # Convert to Opus
+                opus_file = wav_file.name.replace('.wav', '.opus')
+                subprocess.run([
+                    'ffmpeg', '-i', wav_file.name, 
+                    '-c:a', 'libopus', '-b:a', '64k',
+                    '-y', opus_file
+                ], check=True, capture_output=True)
+                
+                # Read Opus and return as BytesIO
+                with open(opus_file, 'rb') as f:
+                    opus_data = f.read()
+                
+                temp_file = io.BytesIO(opus_data)
+                temp_file.seek(0)
+                
+                # Clean up temporary files
+                os.unlink(wav_file.name)
+                os.unlink(opus_file)
+            
+            logging.info(f'[TTS] TTS generation completed successfully, audio_size={len(audio_data)}')
+            return temp_file, len(text)
             
         except Exception as e:
-            logging.error(f'TTS generation error: {str(e)}')
+            logging.error(f'[TTS] TTS generation error: {str(e)}')
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
     async def transcribe(self, filename):
         """
-        Transcribes the audio file using the Whisper model.
+        Transcribes the audio file using Google AI Gemini model.
         """
+        bot_language = self.config['bot_language']
         try:
-            # Google AI doesn't have built-in transcription like OpenAI
-            # This is a placeholder - you might need to use a different service
-            raise Exception("Audio transcription is not supported with Google AI. Please use a different service like OpenAI Whisper or Google Cloud Speech-to-Text.")
+            # Log transcription request
+            logging.info(f'[TRANSCRIBE] Transcription request: filename={filename}')
+            
+            # Read audio file
+            with open(filename, 'rb') as f:
+                audio_bytes = f.read()
+            
+            # Determine MIME type based on file extension
+            mime_type = 'audio/mp3'  # default
+            if filename.endswith('.wav'):
+                mime_type = 'audio/wav'
+            elif filename.endswith('.ogg'):
+                mime_type = 'audio/ogg'
+            elif filename.endswith('.opus'):
+                mime_type = 'audio/opus'
+            
+            # Create transcription prompt
+            prompt = "Transcribe this audio accurately. Return only the transcribed text without any additional commentary."
+            if 'whisper_prompt' in self.config and self.config['whisper_prompt']:
+                prompt = self.config['whisper_prompt']
+            
+            # Send transcription request
+            response = await self.client.aio.models.generate_content(
+                model=self.config.get('transcription_model', 'gemini-2.5-flash'),
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(
+                        data=audio_bytes,
+                        mime_type=mime_type,
+                    )
+                ]
+            )
+            
+            if not response.candidates or len(response.candidates) == 0:
+                logging.error(f'[TRANSCRIBE] No response from Google AI: {str(response)}')
+                raise Exception(
+                    f"⚠️ _{localized_text('error', bot_language)}._ "
+                    f"⚠️\n{localized_text('try_again', bot_language)}."
+                )
+            
+            # Extract transcribed text
+            transcribed_text = response.text
+            logging.info(f'[TRANSCRIBE] Transcription completed: text_length={len(transcribed_text)}')
+            
+            return transcribed_text
             
         except Exception as e:
-            logging.exception(e)
-            raise Exception(f"⚠️ _{localized_text('error', self.config['bot_language'])}._ ⚠️\n{str(e)}") from e
+            logging.error(f'[TRANSCRIBE] Transcription error: {str(e)}')
+            raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 

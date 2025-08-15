@@ -1,11 +1,16 @@
 import logging
 import os
 import json
+import warnings
 
 from dotenv import load_dotenv
 
+# Filter out Pydantic field shadowing warnings
+warnings.filterwarnings('ignore', message='Field name.*shadows an attribute')
+
 from plugin_manager import PluginManager
 from openai_helper2 import OpenAIHelper2
+from googleai import GoogleAIHelper
 from telegram_bot import ChatGPTTelegramBot
 
 
@@ -21,42 +26,67 @@ def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     # Check if the required environment variables are set
-    required_values = ['TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY']
+    ai_provider = os.environ.get('AI_PROVIDER', 'openai').lower()
+    
+    if ai_provider == 'openai':
+        required_values = ['TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY']
+    elif ai_provider == 'google':
+        required_values = ['TELEGRAM_BOT_TOKEN', 'GEMINI_API_KEY']
+    else:
+        logging.error(f'Unsupported AI provider: {ai_provider}. Supported providers: openai, google')
+        exit(1)
+    
     missing_values = [value for value in required_values if os.environ.get(value) is None]
     if len(missing_values) > 0:
         logging.error(f'The following environment values are missing in your .env: {", ".join(missing_values)}')
         exit(1)
 
     # Setup configurations
-    model = os.environ.get('OPENAI_MODEL', 'gpt-4o')
+    if ai_provider == 'openai':
+        model = os.environ.get('OPENAI_MODEL', 'gpt-4o')
+    else:
+        model = os.environ.get('GOOGLE_MODEL', 'gemini-pro')
 
-    openai_config = {
-        'api_key': os.environ['OPENAI_API_KEY'],
+    # Common configuration
+    common_config = {
         'stream': os.environ.get('STREAM', 'true').lower() == 'true',
-        'proxy': os.environ.get('PROXY', None) or os.environ.get('OPENAI_PROXY', None),
         'max_history_size': int(os.environ.get('MAX_HISTORY_SIZE', 15)),
         'max_conversation_age_minutes': int(os.environ.get('MAX_CONVERSATION_AGE_MINUTES', 180)),
         'assistant_prompt': os.environ.get('ASSISTANT_PROMPT', 'You are a helpful assistant.'),
         'temperature': float(os.environ.get('TEMPERATURE', 1.0)),
-        'image_model': os.environ.get('IMAGE_MODEL', 'dall-e-2'),
-        'image_quality': os.environ.get('IMAGE_QUALITY', 'standard'),
-        'image_style': os.environ.get('IMAGE_STYLE', 'vivid'),
-        'image_size': os.environ.get('IMAGE_SIZE', '512x512'),
+        'top_p': float(os.environ.get('TOP_P', 1.0)),
+        'max_output_tokens': int(os.environ.get('MAX_OUTPUT_TOKENS', 8192)),
         'model': model,
-        'functions_max_consecutive_calls': int(os.environ.get('FUNCTIONS_MAX_CONSECUTIVE_CALLS', 10)),
-        'presence_penalty': float(os.environ.get('PRESENCE_PENALTY', 0.0)),
-        'frequency_penalty': float(os.environ.get('FREQUENCY_PENALTY', 0.0)),
         'bot_language': os.environ.get('BOT_LANGUAGE', 'en'),
         'show_plugins_used': os.environ.get('SHOW_PLUGINS_USED', 'false').lower() == 'true',
-        'whisper_prompt': os.environ.get('WHISPER_PROMPT', ''),
-        'vision_model': os.environ.get('VISION_MODEL', model),
-        'enable_vision_follow_up_questions': os.environ.get('ENABLE_VISION_FOLLOW_UP_QUESTIONS', 'true').lower() == 'true',
         'vision_prompt': os.environ.get('VISION_PROMPT', 'What is in this image'),
-        'vision_detail': os.environ.get('VISION_DETAIL', 'auto'),
-        'tts_model': os.environ.get('TTS_MODEL', 'tts-1'),
-        'tts_voice': os.environ.get('TTS_VOICE', 'alloy'),
-        'enable_web_search': os.environ.get('ENABLE_WEB_SEARCH', 'true').lower() == 'true',
     }
+    
+    if ai_provider == 'openai':
+        ai_config = {
+            **common_config,
+            'api_key': os.environ['OPENAI_API_KEY'],
+            'image_model': os.environ.get('IMAGE_MODEL', 'dall-e-2'),
+            'image_quality': os.environ.get('IMAGE_QUALITY', 'standard'),
+            'image_style': os.environ.get('IMAGE_STYLE', 'vivid'),
+            'image_size': os.environ.get('IMAGE_SIZE', '512x512'),
+            'functions_max_consecutive_calls': int(os.environ.get('FUNCTIONS_MAX_CONSECUTIVE_CALLS', 10)),
+            'presence_penalty': float(os.environ.get('PRESENCE_PENALTY', 0.0)),
+            'frequency_penalty': float(os.environ.get('FREQUENCY_PENALTY', 0.0)),
+            'whisper_prompt': os.environ.get('WHISPER_PROMPT', ''),
+            'vision_model': os.environ.get('VISION_MODEL', model),
+            'enable_vision_follow_up_questions': os.environ.get('ENABLE_VISION_FOLLOW_UP_QUESTIONS', 'true').lower() == 'true',
+            'vision_detail': os.environ.get('VISION_DETAIL', 'auto'),
+            'tts_model': os.environ.get('TTS_MODEL', 'tts-1'),
+            'tts_voice': os.environ.get('TTS_VOICE', 'alloy'),
+            'enable_web_search': os.environ.get('ENABLE_WEB_SEARCH', 'true').lower() == 'true',
+        }
+    else:  # google
+        ai_config = {
+            **common_config,
+            'api_key': os.environ['GEMINI_API_KEY'],
+            'vision_model': os.environ.get('GOOGLE_VISION_MODEL', 'gemini-2.0-flash-exp'),
+        }
 
     if os.environ.get('MONTHLY_USER_BUDGETS') is not None:
         logging.warning('The environment variable MONTHLY_USER_BUDGETS is deprecated. '
@@ -91,7 +121,6 @@ def main():
         'user_budgets': os.environ.get('USER_BUDGETS', os.environ.get('MONTHLY_USER_BUDGETS', '*')),
         'guest_budget': float(os.environ.get('GUEST_BUDGET', os.environ.get('MONTHLY_GUEST_BUDGET', '100.0'))),
         'stream': os.environ.get('STREAM', 'true').lower() == 'true',
-        'proxy': os.environ.get('PROXY', None) or os.environ.get('TELEGRAM_PROXY', None),
         'voice_reply_transcript': os.environ.get('VOICE_REPLY_WITH_TRANSCRIPT_ONLY', 'false').lower() == 'true',
         'voice_reply_prompts': os.environ.get('VOICE_REPLY_PROMPTS', '').split(';'),
         'ignore_group_transcriptions': os.environ.get('IGNORE_GROUP_TRANSCRIPTIONS', 'true').lower() == 'true',
@@ -112,10 +141,15 @@ def main():
         'plugins': os.environ.get('PLUGINS', '').split(',')
     }
 
-    # Setup and run ChatGPT and Telegram bot
+    # Setup and run AI helper and Telegram bot
     plugin_manager = PluginManager(config=plugin_config)
-    openai_helper = OpenAIHelper2(config=openai_config, plugin_manager=plugin_manager)
-    telegram_bot = ChatGPTTelegramBot(config=telegram_config, openai=openai_helper)
+    
+    if ai_provider == 'openai':
+        ai_helper = OpenAIHelper2(config=ai_config, plugin_manager=plugin_manager)
+    else:  # google
+        ai_helper = GoogleAIHelper(config=ai_config, plugin_manager=plugin_manager)
+    
+    telegram_bot = ChatGPTTelegramBot(config=telegram_config, openai=ai_helper)
     telegram_bot.run()
 
 

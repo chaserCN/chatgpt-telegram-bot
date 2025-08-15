@@ -142,6 +142,53 @@ async def send_action_periodically(update: Update, context: CallbackContext, cha
         )
         await asyncio.sleep(4.5)
 
+async def send_message_with_retry(update: Update,
+                                  text: str, markdown: bool = True, reply_to_message_id: int | None = None,
+                                  message_thread_id: int | None = None):
+    """
+    Send a message with retry logic in case of failure (e.g. broken markdown)
+    :param update: The update object containing the message to reply to
+    :param text: The text to send
+    :param markdown: Whether to use markdown parse mode
+    :param reply_to_message_id: The message id to reply to (overrides default)
+    :param message_thread_id: The thread id for topic messages
+    :return: The sent message
+    """
+    # Validate inputs
+    if update is None or update.effective_message is None:
+        raise ValueError("Update or update.effective_message cannot be None")
+    if text is None:
+        text = ""
+    
+    try:
+        return await update.effective_message.reply_text(
+            text=text,
+            parse_mode=constants.ParseMode.HTML if markdown else None,
+            reply_to_message_id=reply_to_message_id,
+            message_thread_id=message_thread_id
+        )
+    except telegram.error.BadRequest as e:
+        logging.warning("BadRequest: " + str(e)) 
+
+        if str(e).startswith("Can't parse entities"):
+            try:
+                text = remove_html_tags(text)
+                return await update.effective_message.reply_text(
+                    text=text,
+                    reply_to_message_id=reply_to_message_id,
+                    message_thread_id=message_thread_id
+                )
+            except Exception as e:
+                logging.warning(f'Failed to send message: {str(e)}')
+                raise e
+        else:
+            raise e
+
+    except Exception as e:
+        logging.error(f'Exception in send_message_with_retry: update={update}, text_length={len(text) if text else 0}')
+        logging.warning("Exception: " + str(e))
+        raise e
+
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int | None,
                                   message_id: str, text: str, markdown: bool = True, is_inline: bool = False):
     """
@@ -160,12 +207,16 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
             message_id=int(message_id) if not is_inline else None,
             inline_message_id=message_id if is_inline else None,
             text=text,
-            parse_mode=constants.ParseMode.MARKDOWN if markdown else None,
+            parse_mode=constants.ParseMode.HTML if markdown else None,
         )
     except telegram.error.BadRequest as e:
+        logging.warning("BadRequest: " + str(e)) 
+
         if str(e).startswith("Message is not modified"):
             return
         try:
+            text = remove_html_tags(text)
+
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=int(message_id) if not is_inline else None,
@@ -177,8 +228,25 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
             raise e
 
     except Exception as e:
-        logging.warning(str(e))
+        logging.warning("Exception: " + str(e))
         raise e
+
+def remove_html_tags(text: str) -> str:
+    """
+    Remove HTML tags from text and replace HTML entities
+    """
+    import re
+    import html
+    
+    # Remove HTML tags
+    clean = re.compile('<.*?>')
+    text = re.sub(clean, '', text)
+    
+    # Replace HTML entities back to original symbols
+    text = html.unescape(text)
+    
+    return text
+
 
 
 async def error_handler(_: object, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -16,8 +16,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, \
 from pydub import AudioSegment
 from PIL import Image
 
-from utils import is_group_chat, get_thread_id, message_text, wrap_with_indicator, split_into_chunks, \
-    edit_message_with_retry, get_stream_cutoff_values, is_allowed, get_remaining_budget, is_admin, is_within_budget, \
+from utils import is_group_chat, get_thread_id, message_text, print_object, wrap_with_indicator, split_into_chunks, \
+    edit_message_with_retry, send_message_with_retry, get_stream_cutoff_values, is_allowed, get_remaining_budget, is_admin, is_within_budget, \
     get_reply_to_message_id, error_handler, is_direct_result, handle_direct_result, \
     cleanup_intermediate_files, send_action_periodically, localized_text
 from openai_helper2 import OpenAIHelper2
@@ -592,7 +592,8 @@ class ChatGPTTelegramBot:
                     backoff = 0
                     stream_chunk = 0
 
-                    async for content, is_finished, use_markdown in response_stream:
+                    async for content, is_finished in response_stream:
+                        print("[BOT] Received is_finished:", is_finished, 'content', content)
                         if is_direct_result(content):
                             return await handle_direct_result(self.config, update, content)
 
@@ -606,14 +607,14 @@ class ChatGPTTelegramBot:
                                 stream_chunk += 1
                                 try:
                                     await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
-                                                                  stream_chunks[-2])
+                                                                  stream_chunks[-2], markdown=is_finished)
                                 except:
                                     pass
                                 try:
-                                    sent_message = await update.effective_message.reply_text(
-                                        message_thread_id=get_thread_id(update),
-                                        text=content if len(content) > 0 else "..."
-                                    )
+                                    sent_message = await send_message_with_retry(update=update,
+                                                                                 text=content if len(content) > 0 else "...",
+                                                                                 markdown=is_finished,
+                                                                                 message_thread_id=get_thread_id(update))
                                 except:
                                     pass
                                 continue
@@ -623,23 +624,28 @@ class ChatGPTTelegramBot:
 
                         if i == 0:
                             try:
+                                print("[BOT] First message")
+
                                 if sent_message is not None:
                                     await context.bot.delete_message(chat_id=sent_message.chat_id,
                                                                      message_id=sent_message.message_id)
-                                sent_message = await update.effective_message.reply_text(
-                                    message_thread_id=get_thread_id(update),
-                                    reply_to_message_id=get_reply_to_message_id(self.config, update),
-                                    text=content,
-                                )
-                            except:
+
+                                sent_message = await send_message_with_retry(update=update,
+                                                                             text=content,
+                                                                             markdown=is_finished,
+                                                                             reply_to_message_id=get_reply_to_message_id(self.config, update),
+                                                                             message_thread_id=get_thread_id(update))
+                            except Exception as e:
+                                print("[BOT] Error:", e)
                                 continue
 
                         elif abs(len(content) - len(prev)) > cutoff or is_finished:
                             prev = content
 
                             try:
+                                print("[BOT] Editing message")
                                 await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
-                                                              text=content, markdown=use_markdown)
+                                                              text=content, markdown=is_finished)
 
                             except RetryAfter as e:
                                 backoff += 5
@@ -654,6 +660,8 @@ class ChatGPTTelegramBot:
                             except Exception:
                                 backoff += 5
                                 continue
+                        else:
+                            print("[BOT] No editing message:", abs(len(content) - len(prev)), cutoff)
 
                             await asyncio.sleep(0.01)
 
@@ -679,33 +687,26 @@ class ChatGPTTelegramBot:
 
                     for index, chunk in enumerate(chunks):
                         try:
-                            await update.effective_message.reply_text(
-                                message_thread_id=get_thread_id(update),
-                                reply_to_message_id=get_reply_to_message_id(self.config,
-                                                                            update) if index == 0 else None,
+                            await send_message_with_retry(
+                                update=update,
                                 text=chunk,
-                                parse_mode=constants.ParseMode.MARKDOWN
+                                markdown=True,
+                                reply_to_message_id=get_reply_to_message_id(self.config, update) if index == 0 else None,
+                                message_thread_id=get_thread_id(update)
                             )
-                        except Exception:
-                            try:
-                                await update.effective_message.reply_text(
-                                    message_thread_id=get_thread_id(update),
-                                    reply_to_message_id=get_reply_to_message_id(self.config,
-                                                                                update) if index == 0 else None,
-                                    text=chunk
-                                )
-                            except Exception as exception:
-                                raise exception
+                        except Exception as exception:
+                            raise exception
 
                 await _reply()
 
         except Exception as e:
             logging.exception(e)
-            await update.effective_message.reply_text(
-                message_thread_id=get_thread_id(update),
-                reply_to_message_id=get_reply_to_message_id(self.config, update),
+            await send_message_with_retry(
+                update=update,
                 text=f"{localized_text('chat_fail', self.config['bot_language'])} {str(e)}",
-                parse_mode=constants.ParseMode.MARKDOWN
+                markdown=False,
+                reply_to_message_id=get_reply_to_message_id(self.config, update),
+                message_thread_id=get_thread_id(update)
             )
 
         finally:
@@ -852,7 +853,7 @@ class ChatGPTTelegramBot:
                         # Edit the current message to indicate that the answer is being processed
                         await context.bot.edit_message_text(inline_message_id=inline_message_id,
                                                             text=f'{query}\n\n_{answer_tr}:_\n{loading_tr}',
-                                                            parse_mode=constants.ParseMode.MARKDOWN)
+                                                            parse_mode=constants.ParseMode.MARKDOWN_V2)
 
                         logging.info(f'Generating response for inline query by {name}')
                         response = await self.openai.get_chat_response(chat_id=user_id, query=query, user_name=user_name)
@@ -942,13 +943,14 @@ class ChatGPTTelegramBot:
         """
         Runs the bot indefinitely until the user presses Ctrl+C
         """
-        application = ApplicationBuilder() \
+        builder = ApplicationBuilder() \
             .token(self.config['token']) \
-            .proxy_url(self.config['proxy']) \
-            .get_updates_proxy_url(self.config['proxy']) \
             .post_init(self.post_init) \
-            .concurrent_updates(True) \
-            .build()
+            .concurrent_updates(True)
+        
+
+        
+        application = builder.build()
 
         application.add_handler(CommandHandler('reset', self.reset))
         application.add_handler(CommandHandler('help', self.help))

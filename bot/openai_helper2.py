@@ -16,9 +16,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_t
 
 from plugin_manager import PluginManager
 from utils import is_direct_result, direct_result_kind, localized_text, print_object, random_file_name
-
-# Константи
-MULTIUSER_CHAT_INSTRUCTIONS = "You are in a multiuser chat. To distinguish users, messages begin with 'Username says:'.\n\n"
+from constants import MULTIUSER_CHAT_INSTRUCTIONS
 
 class OpenAIHelper2:
     def __init__(self, config: dict, plugin_manager: PluginManager):
@@ -451,11 +449,13 @@ class OpenAIHelper2:
             response = await self.client.images.generate(
                 prompt=prompt,
                 n=1,
-                model=self.config['image_model'],
+                model=self.config.get('image_model', 'gpt-image-1'),
                 quality=self.config['image_quality'],
                 style=self.config['image_style'],
                 size=self.config['image_size']
             )
+
+            print_object("generate_image response:", response)
 
             if len(response.data) == 0:
                 logging.error(f'No response from GPT: {str(response)}')
