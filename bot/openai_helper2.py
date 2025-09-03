@@ -25,8 +25,8 @@ class OpenAIHelper2:
         :param config: A dictionary containing the GPT configuration
         :param plugin_manager: The plugin manager
         """
-        #http_client = httpx.AsyncClient(proxies=config['proxy']) if 'proxy' in config else None
-        self.client = openai.AsyncOpenAI(api_key=config['api_key']) #, http_client=http_client)
+
+        self.client = openai.AsyncOpenAI(api_key=config['api_key']) 
         self.config = config
         self.plugin_manager = plugin_manager
         self.last_response_ids: dict[int: str] = {}  # {chat_id: last_response_id}
@@ -125,7 +125,7 @@ class OpenAIHelper2:
                 common_args['tools'] = tools
                 common_args['tool_choice'] = 'auto'
 
-            print(f"common_args: {json.dumps(common_args, indent=2, ensure_ascii=False)}")
+            #print(f"common_args: {json.dumps(common_args, indent=2, ensure_ascii=False)}")
 
             return await self.client.responses.create(**common_args)
 
@@ -403,9 +403,15 @@ class OpenAIHelper2:
                 self.last_response_ids[chat_id] = None
             self.last_updated[chat_id] = datetime.datetime.now()
 
-            prompt = self.config['vision_prompt'] if prompt is None or prompt.strip() == "" else prompt
-            if user_name:
-                prompt = f"{user_name} says: {prompt}"
+            # Set default prompt if none provided and no history
+            if not prompt or not prompt.strip():
+                if not (chat_id in self.last_response_ids and self.last_response_ids[chat_id]):
+                    # No history - use default vision prompt
+                    prompt = self.config['vision_prompt']
+            if user_name and prompt and prompt.strip():
+                prompt = f"{user_name}: {prompt}"
+            else:
+                prompt = f"{user_name} sends a picture"
 
             base64_image = base64.b64encode(fileobj.getvalue()).decode('utf-8')
 
@@ -426,7 +432,7 @@ class OpenAIHelper2:
             if chat_id in self.last_response_ids and self.last_response_ids[chat_id]:
                 common_args['previous_response_id'] = self.last_response_ids[chat_id]
 
-            print(f"common_args: {json.dumps(common_args, indent=2, ensure_ascii=False)}")
+            #print(f"common_args: {json.dumps(common_args, indent=2, ensure_ascii=False)}")
 
             return await self.client.responses.create(**common_args)
 
@@ -455,7 +461,7 @@ class OpenAIHelper2:
                 size=self.config['image_size']
             )
 
-            print_object("generate_image response:", response)
+            #print_object("generate_image response:", response)
 
             if len(response.data) == 0:
                 logging.error(f'No response from GPT: {str(response)}')

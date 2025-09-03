@@ -144,7 +144,7 @@ class GoogleAIHelper:
 
             console.print(f"[bold yellow]🚀 [SEND] API request:[/bold yellow] [cyan]model={self.config['model']}, stream={stream}, history_length={len(self.conversations[chat_id])}[/cyan]")
             logging.info(f'[SEND] API request: model={self.config["model"]}, stream={stream}, history_length={len(self.conversations[chat_id])}')
-            self.__print_history_colored(chat_id)
+            #self.__print_history_colored(chat_id)
 
             if stream:
                 response = await self.client.aio.models.generate_content_stream(
@@ -176,7 +176,7 @@ class GoogleAIHelper:
         return None
 
     async def __process_nonstreaming_response(self, response, chat_id: int) -> str:
-        print_object("[NON-STREAM] Response:", response)
+        #print_object("[NON-STREAM] Response:", response)
         
         answer, has_grounding, _ = self.__process_nonfunction_response(response, check_grounding=True)
         answer = answer or ""
@@ -212,7 +212,7 @@ class GoogleAIHelper:
 
         async for chunk in response:
             chunk_count += 1
-            print_object("Streaming chunk:", chunk)
+            #print_object("Streaming chunk:", chunk)
             chunk_text, found_grounding, is_final = self.__process_nonfunction_response(chunk, check_grounding=not has_grounding)
 
             if found_grounding and not has_grounding:
@@ -301,35 +301,64 @@ class GoogleAIHelper:
     async def __send_vision_query(self, chat_id: int, fileobj, user_name: str | None, prompt=None, stream=False):
         bot_language = self.config['bot_language']
         try:
-            prompt = self.config['vision_prompt'] if prompt is None or prompt.strip() == "" else prompt
-            if user_name:
+            logging.info(f'[VISION] Vision API request: model={self.config["model"]}, prompt="{prompt}", stream={stream}')
+
+            # Set default prompt if none provided and no history
+            if not prompt or not prompt.strip():
+                if not (chat_id in self.conversations and self.conversations[chat_id]):
+                    # No history - use default vision prompt
+                    prompt = self.config['vision_prompt']
+            
+            # Add user name if provided
+            if user_name and prompt and prompt.strip():
                 prompt = f"{user_name}: {prompt}"
+            else:
+                prompt = f"{user_name} sends a picture"
+            
+            # Create parts with image and prompt (if any)
+            parts = [types.Part.from_bytes(
+                data=fileobj.getvalue(),
+                mime_type='image/png',
+            )]
+            if prompt and prompt.strip():
+                parts.append(types.Part(text=prompt))
+            
+            # Create contents
+            if chat_id in self.conversations and self.conversations[chat_id]:
+                # Include conversation history
+                contents = self.conversations[chat_id].copy()
+                contents.append(types.Content(role="user", parts=parts))
+            else:
+                # No history, just send current image and prompt
+                contents = [types.Content(role="user", parts=parts)]
 
-            # Log vision API request
-            logging.info(f'[VISION] Vision API request: model={self.config.get("vision_model", self.config["model"])}, prompt="{prompt}", stream={stream}')
+            # Create config with system instructions
+            logging.info(f'[VISION] Creating config with system instructions')
+            instructions = MULTIUSER_CHAT_INSTRUCTIONS
+            if 'assistant_prompt' in self.config and self.config['assistant_prompt']:
+                instructions += self.config['assistant_prompt']
+                logging.info(f'[VISION] Added assistant prompt: {self.config["assistant_prompt"]}')
 
-            contents=[
-                types.Part.from_bytes(
-                    data=fileobj.getvalue(),
-                    mime_type='image/png',
-                ),
-                prompt
-            ]
+            config = types.GenerateContentConfig(system_instruction=instructions)
+            logging.info(f'[VISION] Config created successfully')
 
-            # Send vision request using simple API
+
+            # Send vision request with history
             if stream:
                 response = await self.client.aio.models.generate_content_stream(
                     model=self.config['model'],
-                    contents=contents
+                    contents=contents,
+                    config=config
                 )
             else:
                 response = await self.client.aio.models.generate_content(
-                    model=self.config.get('vision_model', self.config['model']),
-                    contents=contents
+                    model=self.config['model'],
+                    contents=contents,
+                    config=config
                 )
 
             logging.info(f'[VISION] Response received: type={type(response).__name__}')
-            print_object('[VISION] Response:', response)
+            #print_object('[VISION] Response:', response)
 
             return response
 
