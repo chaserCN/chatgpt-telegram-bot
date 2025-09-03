@@ -25,8 +25,8 @@ class OpenAIHelper2:
         :param config: A dictionary containing the GPT configuration
         :param plugin_manager: The plugin manager
         """
-        http_client = httpx.AsyncClient(proxies=config['proxy']) if 'proxy' in config else None
-        self.client = openai.AsyncOpenAI(api_key=config['api_key'], http_client=http_client)
+        #http_client = httpx.AsyncClient(proxies=config['proxy']) if 'proxy' in config else None
+        self.client = openai.AsyncOpenAI(api_key=config['api_key']) #, http_client=http_client)
         self.config = config
         self.plugin_manager = plugin_manager
         self.last_response_ids: dict[int: str] = {}  # {chat_id: last_response_id}
