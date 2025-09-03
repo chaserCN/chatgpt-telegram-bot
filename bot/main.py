@@ -94,7 +94,6 @@ def main():
             'frequency_penalty': float(os.environ.get('FREQUENCY_PENALTY', 0.0)),
             'whisper_prompt': os.environ.get('WHISPER_PROMPT', ''),
             'vision_model': os.environ.get('VISION_MODEL', model),
-            'enable_vision_follow_up_questions': os.environ.get('ENABLE_VISION_FOLLOW_UP_QUESTIONS', 'true').lower() == 'true',
             'vision_detail': os.environ.get('VISION_DETAIL', 'auto'),
             'tts_model': os.environ.get('TTS_MODEL', 'tts-1'),
             'tts_voice': os.environ.get('TTS_VOICE', 'alloy'),
@@ -104,7 +103,7 @@ def main():
         ai_config = {
             **common_config,
             'api_key': os.environ['GEMINI_API_KEY'],
-            'vision_model': os.environ.get('GOOGLE_VISION_MODEL', 'gemini-2.0-flash-exp'),
+            'vision_model': os.environ.get('VISION_MODEL', 'gemini-2.0-flash-exp'),
         }
 
     if os.environ.get('MONTHLY_USER_BUDGETS') is not None:

@@ -30,7 +30,7 @@ class Role(Enum):
 
 class GoogleAIHelper:
     def __init__(self, config: dict, plugin_manager: PluginManager):
-        self.client = genai.Client()
+        self.client = genai.Client(api_key=config['api_key'])
         self.config = config
         self.plugin_manager = plugin_manager
         self.conversations: dict[int: list] = {}  # {chat_id: conversation_history}
