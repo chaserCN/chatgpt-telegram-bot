@@ -167,13 +167,10 @@ class GoogleAIHelper:
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
     def __tools_for_request(self) -> list[types.Tool]:
-        if self.config.get('enable_web_search', True):
-            grounding_tool = types.Tool(
-                google_search=types.GoogleSearch()
-            )
-            return [grounding_tool]
-
-        return None
+        grounding_tool = types.Tool(
+            google_search=types.GoogleSearch()
+        )
+        return [grounding_tool]
 
     async def __process_nonstreaming_response(self, response, chat_id: int) -> str:
         #print_object("[NON-STREAM] Response:", response)

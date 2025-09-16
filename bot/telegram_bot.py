@@ -20,7 +20,7 @@ from utils import is_group_chat, get_thread_id, message_text, print_object, wrap
     edit_message_with_retry, send_message_with_retry, get_stream_cutoff_values, is_allowed, get_remaining_budget, is_admin, is_within_budget, \
     get_reply_to_message_id, error_handler, is_direct_result, handle_direct_result, \
     cleanup_intermediate_files, send_action_periodically, localized_text
-from openai_helper2 import OpenAIHelper2
+# AI Helper imports handled in main.py
 
 
 class ChatGPTTelegramBot:
@@ -28,11 +28,11 @@ class ChatGPTTelegramBot:
     Class representing a ChatGPT Telegram Bot.
     """
 
-    def __init__(self, config: dict, openai: OpenAIHelper2):
+    def __init__(self, config: dict, openai):
         """
-        Initializes the bot with the given configuration and GPT bot object.
+        Initializes the bot with the given configuration and AI helper object.
         :param config: A dictionary containing the bot configuration
-        :param openai: OpenAIHelper object
+        :param openai: AI Helper object (OpenAIHelper2, GoogleAIHelper, or ClaudeHelper)
         """
         self.config = config
         self.openai = openai
@@ -329,9 +329,11 @@ class ChatGPTTelegramBot:
 
             # Check if we should respond to this message
             should_respond, cleaned_prompt = self._should_respond_to_message(prompt or "")
-            if not should_respond:
-                logging.info(f'Vision coming from group chat, no trigger keyword or addressing words, ignoring...')
-                return
+            # ignore trigger word and addressing words. we assume that images are sent only for bots, 
+            # in order to save some time instead of demanding to type triggers (it may be annoying while passing tests with limited time)
+            # if not should_respond:
+            #     logging.info(f'Vision coming from group chat, no trigger keyword or addressing words, ignoring...')
+            #     return
             prompt = cleaned_prompt
 
         image = update.message.effective_attachment[-1]

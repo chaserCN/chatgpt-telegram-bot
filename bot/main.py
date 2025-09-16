@@ -12,6 +12,7 @@ warnings.filterwarnings('ignore', message='Field name.*shadows an attribute')
 from plugin_manager import PluginManager
 from openai_helper2 import OpenAIHelper2
 from googleai import GoogleAIHelper
+from claude_helper import ClaudeHelper
 from telegram_bot import ChatGPTTelegramBot
 
 
@@ -51,8 +52,10 @@ def main():
         required_values = ['TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY']
     elif ai_provider == 'google':
         required_values = ['TELEGRAM_BOT_TOKEN', 'GEMINI_API_KEY']
+    elif ai_provider == 'claude':
+        required_values = ['TELEGRAM_BOT_TOKEN', 'CLAUDE_API_KEY']
     else:
-        logging.error(f'Unsupported AI provider: {ai_provider}. Supported providers: openai, google')
+        logging.error(f'Unsupported AI provider: {ai_provider}. Supported providers: openai, google, claude')
         exit(1)
     
     missing_values = [value for value in required_values if os.environ.get(value) is None]
@@ -63,8 +66,10 @@ def main():
     # Setup configurations
     if ai_provider == 'openai':
         model = os.environ.get('OPENAI_MODEL', 'gpt-4o')
-    else:
+    elif ai_provider == 'google':
         model = os.environ.get('GOOGLE_MODEL', 'gemini-pro')
+    else:  # claude
+        model = os.environ.get('CLAUDE_MODEL', 'claude-sonnet-4-20250514')
 
     # Common configuration
     common_config = {
@@ -98,10 +103,16 @@ def main():
             'tts_voice': os.environ.get('TTS_VOICE', 'alloy'),
             'enable_web_search': os.environ.get('ENABLE_WEB_SEARCH', 'true').lower() == 'true',
         }
-    else:  # google
+    elif ai_provider == 'google':
         ai_config = {
             **common_config,
             'api_key': os.environ['GEMINI_API_KEY']
+        }
+    else:  # claude
+        ai_config = {
+            **common_config,
+            'api_key': os.environ['CLAUDE_API_KEY'],
+            'whisper_prompt': os.environ.get('WHISPER_PROMPT', ''),
         }
 
     if os.environ.get('MONTHLY_USER_BUDGETS') is not None:
@@ -163,8 +174,10 @@ def main():
     
     if ai_provider == 'openai':
         ai_helper = OpenAIHelper2(config=ai_config, plugin_manager=plugin_manager)
-    else:  # google
+    elif ai_provider == 'google':
         ai_helper = GoogleAIHelper(config=ai_config, plugin_manager=plugin_manager)
+    else:  # claude
+        ai_helper = ClaudeHelper(config=ai_config, plugin_manager=plugin_manager)
     
     telegram_bot = ChatGPTTelegramBot(config=telegram_config, openai=ai_helper)
     telegram_bot.run()
