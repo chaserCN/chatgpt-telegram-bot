@@ -32,8 +32,11 @@ class YouTubeAudioExtractorPlugin(Plugin):
     async def execute(self, function_name, helper, **kwargs) -> Dict:
         link = kwargs['youtube_link']
         try:
-            # Get video info first to extract title
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            # Get video info first - use default settings that work
+            info_opts = {
+                'quiet': True,
+            }
+            with yt_dlp.YoutubeDL(info_opts) as ydl:
                 info = ydl.extract_info(link, download=False)
                 title = info.get('title', 'Unknown')
             
@@ -42,17 +45,20 @@ class YouTubeAudioExtractorPlugin(Plugin):
             if not os.path.exists(uploads_dir):
                 os.makedirs(uploads_dir)
                 
-            filename = re.sub(r'[^\w\-_\. ]', '_', title) + '.mp3'
-            output_path = os.path.join(uploads_dir, filename)
+            # Create filename from video title (will be m4a)
+            clean_title = re.sub(r'[^\w\-_\. ]', '_', title)
+            base_filename = os.path.join(uploads_dir, clean_title)
             
             # Remove any existing files with the same base name (different extensions)
-            base_name = output_path.replace('.mp3', '')
             for ext in ['.mp3', '.m4a', '.opus', '.webm', '.wav', '.flac']:
-                existing_file = base_name + ext
+                existing_file = base_filename + ext
                 if os.path.exists(existing_file):
                     os.remove(existing_file)
             
-            # Configure yt-dlp options for audio extraction
+            # Set output template (yt-dlp will convert to .mp3)
+            output_path = base_filename + '.%(ext)s'
+            
+            # Configure yt-dlp options - use postprocessor with simple settings (no anti-bot)
             ydl_opts = {
                 'format': 'bestaudio/best',
                 'postprocessors': [{
@@ -60,7 +66,7 @@ class YouTubeAudioExtractorPlugin(Plugin):
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
                 }],
-                'outtmpl': output_path.replace('.mp3', '.%(ext)s'),  # yt-dlp will add correct extension
+                'outtmpl': output_path,  # Template already has .%(ext)s
                 'noplaylist': True,
                 'quiet': True,
             }
@@ -69,23 +75,24 @@ class YouTubeAudioExtractorPlugin(Plugin):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([link])
             
-            # Check if file exists (yt-dlp might create it with slightly different name)
-            if not os.path.exists(output_path):
-                # Try to find the actual created file
-                base_name = output_path.replace('.mp3', '')
-                for ext in ['.mp3', '.m4a', '.opus', '.webm']:
-                    potential_path = base_name + ext
-                    if os.path.exists(potential_path):
-                        output_path = potential_path
-                        break
+            # Find the actual created file (should be .mp3 after conversion)
+            actual_file = None
+            for ext in ['.mp3', '.m4a', '.opus', '.webm']:
+                potential_path = base_filename + ext
+                if os.path.exists(potential_path):
+                    actual_file = potential_path
+                    break
             
-            return {
-                'direct_result': {
-                    'kind': 'file',
-                    'format': 'path',
-                    'value': output_path
+            if actual_file:
+                return {
+                    'direct_result': {
+                        'kind': 'file',
+                        'format': 'path',
+                        'value': actual_file
+                    }
                 }
-            }
+            else:
+                return {'result': 'Failed to find downloaded audio file'}
         except Exception as e:
             logging.warning(f'Failed to extract audio from YouTube video: {str(e)}')
             return {'result': 'Failed to extract audio'}
