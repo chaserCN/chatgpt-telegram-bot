@@ -11,7 +11,7 @@ tenacity==8.2.2
 wolframalpha~=5.0.0
 duckduckgo_search~=3.8.3
 spotipy~=2.23.0
-pytube~=15.0.0
+yt-dlp>=2025.9.5
 gtts~=2.3.2
 whois~=0.9.27
 Pillow>=10.2.0
