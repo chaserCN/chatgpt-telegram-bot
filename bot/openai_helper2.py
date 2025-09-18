@@ -500,13 +500,22 @@ class OpenAIHelper2:
         except Exception as e:
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
-    async def transcribe(self, filename):
+    async def transcribe(self, filename, prompt=None):
         """
         Transcribes the audio file using the Whisper model.
         """
         try:
             with open(filename, "rb") as audio:
-                prompt_text = self.config['whisper_prompt']
+                # Create transcription prompt with Ukrainian base
+                prompt_text = "Транскрибуй це аудіо точно. Поверни тільки транскрибований текст без жодних додаткових коментарів. "
+                
+                # Add specific prompt from caption or config
+                if prompt:
+                    prompt_text += prompt
+                elif self.config['whisper_prompt']:
+                    prompt_text += self.config['whisper_prompt']
+                
+                print(f"transcribe prompt: {prompt_text}")
                 result = await self.client.audio.transcriptions.create(model="whisper-1", file=audio, prompt=prompt_text)
                 return result.text
         except Exception as e:

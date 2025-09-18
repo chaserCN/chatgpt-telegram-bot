@@ -485,7 +485,7 @@ class ClaudeHelper:
         bot_language = self.config['bot_language']
         raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\nText-to-speech is not supported by Claude API. Consider using other models for TTS.")
 
-    async def transcribe(self, filename):
+    async def transcribe(self, filename, prompt=None):
         """
         Claude doesn't support audio transcription natively.
         This method raises an exception to indicate it's not supported.

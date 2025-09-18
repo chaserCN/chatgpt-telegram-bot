@@ -1,4 +1,5 @@
 import datetime
+import os
 from typing import Dict
 
 from gtts import gTTS
@@ -33,13 +34,20 @@ class GTTSTextToSpeech(Plugin):
         }]
 
     async def execute(self, function_name, helper, **kwargs) -> Dict:
+        # Create uploads/tts directory and filename
+        uploads_dir = 'uploads/tts'
+        if not os.path.exists(uploads_dir):
+            os.makedirs(uploads_dir)
+            
         tts = gTTS(kwargs['text'], lang=kwargs.get('lang', 'en'))
-        output = f'gtts_{datetime.datetime.now().timestamp()}.mp3'
-        tts.save(output)
+        filename = f'gtts_{datetime.datetime.now().timestamp()}.mp3'
+        output_path = os.path.join(uploads_dir, filename)
+        tts.save(output_path)
+        
         return {
             'direct_result': {
                 'kind': 'file',
                 'format': 'path',
-                'value': output
+                'value': output_path
             }
         }

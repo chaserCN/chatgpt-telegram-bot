@@ -3,6 +3,7 @@ import os
 import json
 import warnings
 import argparse
+import shutil
 
 from dotenv import load_dotenv
 
@@ -25,6 +26,25 @@ def parse_arguments():
     return parser.parse_args()
 
 
+def cleanup_plugin_directories():
+    """Clean up plugin download directories on startup"""
+    try:
+        # Get project root directory
+        project_root = os.path.dirname(os.path.dirname(__file__))
+        
+        # Simply remove the entire uploads directory
+        uploads_dir = os.path.join(project_root, 'uploads')
+        if os.path.exists(uploads_dir):
+            try:
+                shutil.rmtree(uploads_dir)
+                logging.info(f'Removed uploads directory: {uploads_dir}')
+            except Exception as e:
+                logging.warning(f'Failed to remove uploads directory: {e}')
+        
+    except Exception as e:
+        logging.error(f'Error during plugin directories cleanup: {e}')
+
+
 def main():
     # Parse command line arguments
     args = parse_arguments()
@@ -44,6 +64,9 @@ def main():
     
     logging.info(f'[MAIN] Loading .env file: {env_file}')
     load_dotenv(env_file)
+    
+    # Clean up plugin directories on startup
+    cleanup_plugin_directories()
 
     # Check if the required environment variables are set
     ai_provider = os.environ.get('AI_PROVIDER', 'openai').lower()
@@ -106,7 +129,8 @@ def main():
     elif ai_provider == 'google':
         ai_config = {
             **common_config,
-            'api_key': os.environ['GEMINI_API_KEY']
+            'api_key': os.environ['GEMINI_API_KEY'],
+            'whisper_prompt': os.environ.get('WHISPER_PROMPT', ''),
         }
     else:  # claude
         ai_config = {

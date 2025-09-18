@@ -32,19 +32,18 @@ class YouTubeAudioExtractorPlugin(Plugin):
     async def execute(self, function_name, helper, **kwargs) -> Dict:
         link = kwargs['youtube_link']
         try:
-            # Create audio_downloads directory if it doesn't exist
-            audio_downloads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'audio_downloads')
-            if not os.path.exists(audio_downloads_dir):
-                os.makedirs(audio_downloads_dir)
-            
             # Get video info first to extract title
             with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
                 info = ydl.extract_info(link, download=False)
                 title = info.get('title', 'Unknown')
             
-            # Create filename from video title
+            # Create uploads/youtube directory and filename
+            uploads_dir = 'uploads/youtube'
+            if not os.path.exists(uploads_dir):
+                os.makedirs(uploads_dir)
+                
             filename = re.sub(r'[^\w\-_\. ]', '_', title) + '.mp3'
-            output_path = os.path.join(audio_downloads_dir, filename)
+            output_path = os.path.join(uploads_dir, filename)
             
             # Remove any existing files with the same base name (different extensions)
             base_name = output_path.replace('.mp3', '')

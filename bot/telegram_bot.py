@@ -189,8 +189,6 @@ class ChatGPTTelegramBot:
         """
         Transcribe audio messages.
         """
-        if not self.config['enable_transcription'] or not await self.check_allowed_and_within_budget(update, context):
-            return
 
         if is_group_chat(update) and self.config['ignore_group_transcriptions']:
             logging.info(f'Transcription coming from group chat, ignoring...')
@@ -239,7 +237,9 @@ class ChatGPTTelegramBot:
             user_name = self._get_user_name_for_api(user_id=user_id, telegram_user_name=update.message.from_user.name)
 
             try:
-                transcript = await self.openai.transcribe(filename_mp3)
+                # Use message caption as prompt if available, otherwise use global WHISPER_PROMPT
+                prompt = update.message.caption or None
+                transcript = await self.openai.transcribe(filename_mp3, prompt=prompt)
 
                 # check if transcript starts with any of the prefixes
                 response_to_transcription = any(transcript.lower().startswith(prefix.lower()) if prefix else False

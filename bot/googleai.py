@@ -488,7 +488,7 @@ class GoogleAIHelper:
             logging.error(f'[TTS] TTS generation error: {str(e)}')
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
-    async def transcribe(self, filename):
+    async def transcribe(self, filename, prompt=None):
         """
         Transcribes the audio file using Google AI Gemini model.
         """
@@ -511,15 +511,18 @@ class GoogleAIHelper:
                 mime_type = 'audio/opus'
             
             # Create transcription prompt
-            prompt = "Transcribe this audio accurately. Return only the transcribed text without any additional commentary."
-            if 'whisper_prompt' in self.config and self.config['whisper_prompt']:
-                prompt = self.config['whisper_prompt']
+            # Use provided prompt, otherwise fall back to global whisper_prompt, then default
+            transcription_prompt = "Транскрибуй це аудіо точно. Поверни тільки транскрибований текст без жодних додаткових коментарів. "
+            if prompt:
+                transcription_prompt += prompt
+            elif 'whisper_prompt' in self.config and self.config['whisper_prompt']:
+                transcription_prompt += self.config['whisper_prompt']
             
             # Send transcription request
             response = await self.client.aio.models.generate_content(
                 model=self.config.get('transcription_model', 'gemini-2.5-flash'),
                 contents=[
-                    prompt,
+                    transcription_prompt,
                     types.Part.from_bytes(
                         data=audio_bytes,
                         mime_type=mime_type,
