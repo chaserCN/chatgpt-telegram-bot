@@ -1,7 +1,7 @@
 python-dotenv==1.0.1
 pydub~=0.25.1
 tiktoken>=0.8.0
-openai==1.28.1
+openai
 google-genai
 python-telegram-bot>=21.0
 requests~=2.31.0
