@@ -329,11 +329,9 @@ class ChatGPTTelegramBot:
 
             # Check if we should respond to this message
             should_respond, cleaned_prompt = self._should_respond_to_message(prompt or "")
-            # ignore trigger word and addressing words. we assume that images are sent only for bots, 
-            # in order to save some time instead of demanding to type triggers (it may be annoying while passing tests with limited time)
-            # if not should_respond:
-            #     logging.info(f'Vision coming from group chat, no trigger keyword or addressing words, ignoring...')
-            #     return
+            if not should_respond:
+                logging.info(f'Vision coming from group chat, no trigger keyword or addressing words, ignoring...')
+                return
             prompt = cleaned_prompt
 
         image = update.message.effective_attachment[-1]
