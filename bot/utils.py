@@ -146,56 +146,44 @@ async def send_message_with_retry(update: Update,
                                   text: str, markdown: bool = True, reply_to_message_id: int | None = None,
                                   message_thread_id: int | None = None):
     """
-    Send a message with a two-step fallback for parsing errors.
-    1. Tries to send the original text with HTML formatting.
-    2. On failure, retries with sanitized HTML using fix_telegram_html_formatting.
-    3. If that also fails, strips all tags with remove_html_tags and sends as plain text.
+    Sends a message with a robust fallback mechanism for HTML parsing errors.
+    1. Sanitizes the text using fix_telegram_html_formatting and tries to send it.
+    2. On failure, strips all tags with remove_html_tags and sends as plain text.
     """
     # Validate inputs
     if update is None or update.effective_message is None:
         raise ValueError("Update or update.effective_message cannot be None")
     if text is None:
         text = ""
-    
+
     try:
-        # Step 1: Try sending the original message with HTML parsing
+        # Step 1: Always sanitize the text first and try sending.
+        fixed_text = fix_telegram_html_formatting(text)
+        logging.info(f"Attempting to send message with sanitized HTML:\n---\n{fixed_text}\n---")
+        
         return await update.effective_message.reply_text(
-            text=text,
+            text=fixed_text,
             parse_mode=constants.ParseMode.HTML if markdown else None,
             reply_to_message_id=reply_to_message_id,
             message_thread_id=message_thread_id
         )
     except telegram.error.BadRequest as e:
-        logging.warning(f"BadRequest on initial send: {e}")
+        logging.warning(f"BadRequest after sanitization: {e}. Falling back to plain text.")
 
-        if str(e).startswith("Can't parse entities"):
-            try:
-                # Step 2 (Fallback 1): Sanitize with fix_telegram_html_formatting and retry
-                logging.info("Initial send failed. Retrying with fix_telegram_html_formatting...")
-                fixed_text = fix_telegram_html_formatting(text)
-                return await update.effective_message.reply_text(
-                    text=fixed_text,
-                    parse_mode=constants.ParseMode.HTML, # Still try with HTML
-                    reply_to_message_id=reply_to_message_id,
-                    message_thread_id=message_thread_id
-                )
-            except telegram.error.BadRequest as e2:
-                # Step 3 (Fallback 2): Strip all tags and send as plain text
-                logging.warning(f"Fallback 1 failed: {e2}. Retrying with remove_html_tags...")
-                try:
-                    stripped_text = remove_html_tags(text)
-                    return await update.effective_message.reply_text(
-                        text=stripped_text,
-                        # No parse_mode, send as plain text
-                        reply_to_message_id=reply_to_message_id,
-                        message_thread_id=message_thread_id
-                    )
-                except Exception as e3:
-                    logging.error(f"All fallbacks failed. Final error: {e3}")
-                    raise e3  # Re-raise the final, critical error
-        else:
-            # Re-raise original error if it's not about entity parsing
-            raise e
+        try:
+            # Step 2 (Fallback): Strip all tags and send as plain text.
+            stripped_text = remove_html_tags(text)
+            logging.info(f"Text after remove_html_tags:\n---\n{stripped_text}\n---")
+            
+            return await update.effective_message.reply_text(
+                text=stripped_text,
+                parse_mode=constants.ParseMode.HTML if markdown else None,
+                reply_to_message_id=reply_to_message_id,
+                message_thread_id=message_thread_id
+            )
+        except Exception as e2:
+            logging.error(f"Final fallback failed: {e2}. Original text was:\n---\n{text}\n---")
+            raise e2  # Re-raise the final, critical error
 
     except Exception as e:
         logging.error(f'An unexpected exception occurred in send_message_with_retry: {e}')
@@ -245,34 +233,118 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
 
 def _fix_entities(text: str) -> str:
     """
-    Correctly converts HTML entities to Unicode characters, preserving a specific set of allowed entities.
+    Властивості:
+      1) Не чіпає HTML-теги (вміст у <> лишається як є).
+      2) У тексті між тегами:
+         - перетворює сирі < > & " у &lt; &gt; &amp; &quot; (лише ці 4, як в Telegram),
+         - декодує всі інші ентіті (напр. &infin;, &#60;, &#x221E;) у символи,
+           але зберігає &lt; &gt; &amp; &quot; як ентіті.
+
+    Приклади:
+      "<b>5 < 10</b>"            -> "<b>5 &lt; 10</b>"
+      "<b>5 &lt; 10<b>"          -> "<b>5 &lt; 10<b>"
+      "<b>-&infin; &lt; 10<b>"   -> "<b>-∞ &lt; 10<b>"
+      "<a href=\"x?y=1&z=2\">go</a>"  -> без змін
     """
     if not text:
         return text
-    
-    import html
 
-    # A dictionary of allowed entities that should not be converted to Unicode characters.
-    # These are replaced with temporary, unique placeholders before general unescaping.
+    import re, html
+
+    # --- знайти коректні теги (кутова дужка '>' завершує тег лише поза лапками)
+    def _extract_tags_spans(s: str):
+        spans = []
+        n = len(s)
+        i = 0
+        while i < n:
+            if s[i] == '<' and i + 1 < n and (s[i+1].isalpha() or s[i+1] == '/'):
+                j = i + 1
+                in_sq = False
+                in_dq = False
+                while j < n:
+                    ch = s[j]
+                    if ch == '"' and not in_sq:
+                        in_dq = not in_dq
+                    elif ch == "'" and not in_dq:
+                        in_sq = not in_sq
+                    elif ch == '>' and not in_sq and not in_dq:
+                        spans.append((i, j + 1))
+                        i = j + 1
+                        break
+                    j += 1
+                else:
+                    # якщо тег не закрився — вважаємо це текстом
+                    i += 1
+            else:
+                i += 1
+        return spans
+
+    spans = _extract_tags_spans(text)
+
+    # --- підміняємо теги плейсхолдерами
+    placeholders = {}
+    parts = []
+    last = 0
+    for idx, (start, end) in enumerate(spans):
+        ph = f"__HTML_TAG_{idx}__"
+        placeholders[ph] = text[start:end]
+        parts.append(text[last:start])
+        parts.append(ph)
+        last = end
+    parts.append(text[last:])
+    temp_text = "".join(parts)
+
+    # --- не даємо html.unescape з'їсти безкрапкові &lt &gt &amp &quot (рідкі кейси)
+    for name in ("lt", "gt", "amp", "quot"):
+        temp_text = re.sub(rf"&{name}(?!;)", rf"&amp;{name}", temp_text, flags=re.IGNORECASE)
+
+    # --- зберігаємо дозволені ентіті
     allowed_entities = {
-        '&lt;': '___TEMP_LT___',
-        '&gt;': '___TEMP_GT___',
-        '&amp;': '___TEMP_AMP___',
-        '&quot;': '___TEMP_QUOT___'
+        "&lt;": "___KEEP_LT___",
+        "&gt;": "___KEEP_GT___",
+        "&amp;": "___KEEP_AMP___",
+        "&quot;": "___KEEP_QUOT___",
     }
+    for ent, ph in allowed_entities.items():
+        temp_text = temp_text.replace(ent, ph)
 
-    # Protect allowed entities by replacing them with placeholders.
-    for entity, placeholder in allowed_entities.items():
-        text = text.replace(entity, placeholder)
+    # --- роздекодовуємо решту ентіті у символи (напр. &infin; -> ∞, &#60; -> <)
+    temp_text = html.unescape(temp_text)
 
-    # Use html.unescape to convert all other HTML entities (e.g., &infin;, &mdash;) to their corresponding Unicode characters.
-    text = html.unescape(text)
+    # --- тимчасово захищаємо будь-які інші валідні ентіті (&foo;, &#123;, &#x1F4A9;)
+    entity_like_pattern = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]+|#[0-9]+|#x[0-9A-Fa-f]+);")
+    entity_placeholders = {}
+    i = 0
+    def _ent_repl(m):
+        nonlocal i
+        token = f"__ENTITY_PH_{i}__"
+        entity_placeholders[token] = m.group(0)
+        i += 1
+        return token
+    temp_text = entity_like_pattern.sub(_ent_repl, temp_text)
 
-    # Restore the protected entities from their placeholders.
-    for entity, placeholder in allowed_entities.items():
-        text = text.replace(placeholder, entity)
+    # --- екрануємо лише 4 дозволені символи у тексті
+    temp_text = (
+        temp_text.replace("&", "&amp;")
+                 .replace("<", "&lt;")
+                 .replace(">", "&gt;")
+                 .replace('"', "&quot;")
+    )
 
-    return text
+    # --- повертаємо інші валідні ентіті як були
+    for ph, ent in entity_placeholders.items():
+        temp_text = temp_text.replace(ph, ent)
+
+    # --- повертаємо дозволені ентіті
+    for ent, ph in allowed_entities.items():
+        temp_text = temp_text.replace(ph, ent)
+
+    # --- повертаємо теги
+    for ph, tag in placeholders.items():
+        temp_text = temp_text.replace(ph, tag)
+
+    return temp_text
+
 
 def remove_html_tags(text: str) -> str:
     """
@@ -348,12 +420,35 @@ def fix_telegram_html_formatting(text: str) -> str:
                 if not (isinstance(attr_value, list) and 'tg-spoiler' in attr_value):
                     del tag[attr_name]
         
+        # After sanitizing attributes, we must also escape the content of pre/code tags
+        if tag.name in ['pre', 'code']:
+            # Use html.escape on the tag's string content to handle <, >, &
+            # This prevents Telegram from interpreting them as tags.
+            original_string = tag.string
+            if original_string:
+                tag.string = html.escape(original_string)
+        
         if tag.name in ['a', 'span'] and not tag.attrs:
             tag.unwrap()
 
+    # After initial sanitization, specifically handle standalone `<code>` tags.
+    # We wrap them in `<i>` for consistent rendering in Telegram.
+    for code_tag in soup.find_all('code'):
+        # Check if the parent is not a <pre> tag
+        if code_tag.parent.name != 'pre':
+            # To wrap it, we create a new `<i>` tag and replace the `<code>` tag with it.
+            # The contents of `<code>` are moved inside the new `<i>` tag.
+            new_tag = soup.new_tag('i')
+            # Ensure we handle NavigableString and other tags correctly
+            if code_tag.string:
+                new_tag.string = code_tag.string
+                code_tag.replace_with(new_tag)
+
+    # Convert the sanitized soup back to a string.
+    # The formatter=None argument prevents bs4 from adding extra HTML structure.
     sanitized_html = soup.decode(formatter=None)
 
-    # Step 2: Final entity processing on the sanitized HTML string.
+    # Final entity processing to ensure only allowed entities remain and stray chars are escaped.
     return _fix_entities(sanitized_html)
 
 

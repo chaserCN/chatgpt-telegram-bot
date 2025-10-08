@@ -26,9 +26,7 @@ ESCAPING:
 STYLE RULES:
 - No Markdown, no headings, no lists with <ul>/<ol>, no <br>, no <p>, no <div>, no <h1>/<h2>/<h3>, no <span> without class="tg-spoiler", no CSS, no inline styles.
 - If you need a newline, use plain newline characters.
+- For inline code, prefer `<i>inline_code</i>` for emphasis, as standalone `<code>` may not render consistently.
 - If a concept requires formatting that is not allowed, fall back to plain text.
-
-FAILSAFE:
-- Before finalizing, mentally validate: only allowed tags/attrs, only &lt; &gt; &amp; &quot; entities, no backticks. Otherwise, replace with plain text.
  
 """
