@@ -401,11 +401,14 @@ def fix_telegram_html_formatting(text: str) -> str:
     soup = BeautifulSoup(text, 'html.parser')
 
     for tag in soup.find_all(True):
+        # but rather convert it back to an escaped plain string. This way,
+        # it's guaranteed to be treated as text by Telegram.
         if tag.name not in allowed_tags:
-            tag.unwrap()
+            tag.replace_with(html.escape(str(tag)))
             continue
 
-        allowed_attrs = allowed_tags[tag.name]
+        # --- Sanitize Attributes ---
+        allowed_attrs = allowed_tags.get(tag.name, [])
         current_attrs = dict(tag.attrs)
 
         for attr_name, attr_value in current_attrs.items():
