@@ -146,13 +146,10 @@ async def send_message_with_retry(update: Update,
                                   text: str, markdown: bool = True, reply_to_message_id: int | None = None,
                                   message_thread_id: int | None = None):
     """
-    Send a message with retry logic in case of failure (e.g. broken markdown)
-    :param update: The update object containing the message to reply to
-    :param text: The text to send
-    :param markdown: Whether to use markdown parse mode
-    :param reply_to_message_id: The message id to reply to (overrides default)
-    :param message_thread_id: The thread id for topic messages
-    :return: The sent message
+    Send a message with a two-step fallback for parsing errors.
+    1. Tries to send the original text with HTML formatting.
+    2. On failure, retries with sanitized HTML using fix_telegram_html_formatting.
+    3. If that also fails, strips all tags with remove_html_tags and sends as plain text.
     """
     # Validate inputs
     if update is None or update.effective_message is None:
@@ -161,6 +158,7 @@ async def send_message_with_retry(update: Update,
         text = ""
     
     try:
+        # Step 1: Try sending the original message with HTML parsing
         return await update.effective_message.reply_text(
             text=text,
             parse_mode=constants.ParseMode.HTML if markdown else None,
@@ -168,25 +166,39 @@ async def send_message_with_retry(update: Update,
             message_thread_id=message_thread_id
         )
     except telegram.error.BadRequest as e:
-        logging.warning("BadRequest: " + str(e)) 
+        logging.warning(f"BadRequest on initial send: {e}")
 
         if str(e).startswith("Can't parse entities"):
             try:
-                text = remove_html_tags(text)
+                # Step 2 (Fallback 1): Sanitize with fix_telegram_html_formatting and retry
+                logging.info("Initial send failed. Retrying with fix_telegram_html_formatting...")
+                fixed_text = fix_telegram_html_formatting(text)
                 return await update.effective_message.reply_text(
-                    text=text,
+                    text=fixed_text,
+                    parse_mode=constants.ParseMode.HTML, # Still try with HTML
                     reply_to_message_id=reply_to_message_id,
                     message_thread_id=message_thread_id
                 )
-            except Exception as e:
-                logging.warning(f'Failed to send message: {str(e)}')
-                raise e
+            except telegram.error.BadRequest as e2:
+                # Step 3 (Fallback 2): Strip all tags and send as plain text
+                logging.warning(f"Fallback 1 failed: {e2}. Retrying with remove_html_tags...")
+                try:
+                    stripped_text = remove_html_tags(text)
+                    return await update.effective_message.reply_text(
+                        text=stripped_text,
+                        # No parse_mode, send as plain text
+                        reply_to_message_id=reply_to_message_id,
+                        message_thread_id=message_thread_id
+                    )
+                except Exception as e3:
+                    logging.error(f"All fallbacks failed. Final error: {e3}")
+                    raise e3  # Re-raise the final, critical error
         else:
+            # Re-raise original error if it's not about entity parsing
             raise e
 
     except Exception as e:
-        logging.error(f'Exception in send_message_with_retry: update={update}, text_length={len(text) if text else 0}')
-        logging.warning("Exception: " + str(e))
+        logging.error(f'An unexpected exception occurred in send_message_with_retry: {e}')
         raise e
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int | None,
@@ -231,22 +243,118 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         logging.warning("Exception: " + str(e))
         raise e
 
+def _fix_entities(text: str) -> str:
+    """
+    Correctly converts HTML entities to Unicode characters, preserving a specific set of allowed entities.
+    """
+    if not text:
+        return text
+    
+    import html
+
+    # A dictionary of allowed entities that should not be converted to Unicode characters.
+    # These are replaced with temporary, unique placeholders before general unescaping.
+    allowed_entities = {
+        '&lt;': '___TEMP_LT___',
+        '&gt;': '___TEMP_GT___',
+        '&amp;': '___TEMP_AMP___',
+        '&quot;': '___TEMP_QUOT___'
+    }
+
+    # Protect allowed entities by replacing them with placeholders.
+    for entity, placeholder in allowed_entities.items():
+        text = text.replace(entity, placeholder)
+
+    # Use html.unescape to convert all other HTML entities (e.g., &infin;, &mdash;) to their corresponding Unicode characters.
+    text = html.unescape(text)
+
+    # Restore the protected entities from their placeholders.
+    for entity, placeholder in allowed_entities.items():
+        text = text.replace(placeholder, entity)
+
+    return text
+
 def remove_html_tags(text: str) -> str:
     """
-    Remove HTML tags from text and replace HTML entities
+    Strips all HTML tags from the text and correctly handles HTML entities.
     """
-    import re
-    import html
+    if not text:
+        return text
     
-    # Remove HTML tags
+    import re
+
+    # Compiles a regular expression to find and remove any HTML tag.
     clean = re.compile('<.*?>')
     text = re.sub(clean, '', text)
     
-    # Replace HTML entities back to original symbols
-    text = html.unescape(text)
+    # Processes HTML entities to ensure they are correctly represented.
+    text = _fix_entities(text)
     
     return text
 
+
+def fix_telegram_html_formatting(text: str) -> str:
+    """
+    Sanitizes AI-generated text to comply with Telegram's strict HTML subset rules using an allowlist-based approach.
+    """
+    if not text:
+        return ""
+
+    import re
+    import html
+
+    # Use a robust HTML parser like BeautifulSoup to correctly handle tag matching and attributes.
+    # This is much safer than regex for complex HTML.
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        print("Warning: BeautifulSoup4 is not installed. Using a less robust regex-based HTML sanitizer.")
+        return re.sub(r'<[^>]*>', '', text)
+
+    # Step 1: Remove backticks, as they are not supported in Telegram's HTML.
+    text = text.replace('`', '')
+
+    # Defines the tags and their allowed attributes based on Telegram's formatting rules.
+    allowed_tags = {
+        'b': [], 'strong': [], 'i': [], 'em': [], 'u': [], 'ins': [],
+        's': [], 'strike': [], 'del': [], 'tg-spoiler': [],
+        'a': ['href'],
+        'span': ['class'],
+        'code': [],
+        'pre': [],
+        'blockquote': []
+    }
+
+    # Use 'html.parser' for its standard library availability and speed.
+    soup = BeautifulSoup(text, 'html.parser')
+
+    for tag in soup.find_all(True):
+        if tag.name not in allowed_tags:
+            tag.unwrap()
+            continue
+
+        allowed_attrs = allowed_tags[tag.name]
+        current_attrs = dict(tag.attrs)
+
+        for attr_name, attr_value in current_attrs.items():
+            if attr_name not in allowed_attrs:
+                del tag[attr_name]
+                continue
+            
+            if tag.name == 'a' and attr_name == 'href':
+                if not (isinstance(attr_value, str) and (attr_value.startswith('http') or attr_value.startswith('tg:'))):
+                    del tag[attr_name]
+            elif tag.name == 'span' and attr_name == 'class':
+                if not (isinstance(attr_value, list) and 'tg-spoiler' in attr_value):
+                    del tag[attr_name]
+        
+        if tag.name in ['a', 'span'] and not tag.attrs:
+            tag.unwrap()
+
+    sanitized_html = soup.decode(formatter=None)
+
+    # Step 2: Final entity processing on the sanitized HTML string.
+    return _fix_entities(sanitized_html)
 
 
 async def error_handler(_: object, context: ContextTypes.DEFAULT_TYPE) -> None:

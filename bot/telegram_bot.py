@@ -469,28 +469,21 @@ class ChatGPTTelegramBot:
                         return await handle_direct_result(self.config, update, interpretation)
 
                     try:
+                        await send_message_with_retry(
+                            update=update,
+                            text=interpretation,
+                            markdown=True,
+                            reply_to_message_id=get_reply_to_message_id(self.config, update),
+                            message_thread_id=get_thread_id(update)
+                        )
+                    except Exception as e:
+                        logging.exception(e)
                         await update.effective_message.reply_text(
                             message_thread_id=get_thread_id(update),
                             reply_to_message_id=get_reply_to_message_id(self.config, update),
-                            text=interpretation,
+                            text=f"{localized_text('vision_fail', bot_language)}: {str(e)}",
                             parse_mode=constants.ParseMode.HTML
                         )
-                    except BadRequest:
-                        try:
-                            await update.effective_message.reply_text(
-                                message_thread_id=get_thread_id(update),
-                                reply_to_message_id=get_reply_to_message_id(self.config, update),
-                                text=interpretation,
-                                parse_mode=constants.ParseMode.HTML
-                            )
-                        except Exception as e:
-                            logging.exception(e)
-                            await update.effective_message.reply_text(
-                                message_thread_id=get_thread_id(update),
-                                reply_to_message_id=get_reply_to_message_id(self.config, update),
-                                text=f"{localized_text('vision_fail', bot_language)}: {str(e)}",
-                                parse_mode=constants.ParseMode.HTML
-                            )
                 except Exception as e:
                     logging.exception(e)
                     await update.effective_message.reply_text(

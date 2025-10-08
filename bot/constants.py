@@ -17,7 +17,7 @@ OUTPUT FORMAT IS STRICT HTML SUBSET (Telegram):
 
 ENTITIES:
 - Use ONLY &lt; &gt; &amp; &quot;.
-- Do NOT emit any other entities (e.g., &nbsp;, &mdash;, &hellip;, &#NNN;).
+- Do NOT emit any other entities (e.g., &nbsp;, &mdash;, &hellip;, &#NNN;, &infin; or any other except &lt; &gt; &amp; &quot;).
 - Never output the backtick character ` anywhere.
 
 ESCAPING:
@@ -29,6 +29,6 @@ STYLE RULES:
 - If a concept requires formatting that is not allowed, fall back to plain text.
 
 FAILSAFE:
-- Before finalizing, mentally validate: only allowed tags/attrs, only (&lt; &gt; &amp; &quot;) entities, no backticks. Otherwise, replace with plain text.
+- Before finalizing, mentally validate: only allowed tags/attrs, only &lt; &gt; &amp; &quot; entities, no backticks. Otherwise, replace with plain text.
  
 """
