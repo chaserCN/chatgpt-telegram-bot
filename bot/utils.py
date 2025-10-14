@@ -13,6 +13,7 @@ import telegram
 from telegram import Message, MessageEntity, Update, ChatMember, constants
 from telegram.ext import CallbackContext, ContextTypes
 
+from latex.latex_handler import process_text
 from usage_tracker import UsageTracker
 
 try:
@@ -144,7 +145,7 @@ async def send_action_periodically(update: Update, context: CallbackContext, cha
 
 async def send_message_with_retry(update: Update,
                                   text: str, markdown: bool = True, reply_to_message_id: int | None = None,
-                                  message_thread_id: int | None = None):
+                                  message_thread_id: int | None = None, enable_latex: bool = True):
     """
     Sends a message with a robust fallback mechanism for HTML parsing errors.
     1. Sanitizes the text using fix_telegram_html_formatting and tries to send it.
@@ -159,6 +160,32 @@ async def send_message_with_retry(update: Update,
     try:
         # Step 1: Always sanitize the text first and try sending.
         fixed_text = fix_telegram_html_formatting(text)
+
+        logging.info(f"Fixed text:\n---\n{fixed_text}\n---")
+        
+        # Process for LaTeX if enabled
+        if enable_latex:
+            processed_type, processed_content = process_text(fixed_text, output_dir='uploads')
+            
+            if processed_type == 'image':
+                sent_messages = []
+                for image_path in processed_content:
+                    #try:
+                        with open(image_path, 'rb') as photo_file:
+                            message = await update.effective_message.reply_photo(
+                                photo=photo_file,
+                                reply_to_message_id=reply_to_message_id,
+                                message_thread_id=message_thread_id
+                            )
+                        sent_messages.append(message)
+                    #finally:
+                        # if os.path.exists(image_path):
+                        #     os.remove(image_path)
+                return sent_messages[-1] if sent_messages else None
+
+            # If it's text, update fixed_text with the (potentially unchanged) text
+            fixed_text = processed_content
+
         logging.info(f"Attempting to send message with sanitized HTML:\n---\n{fixed_text}\n---")
         
         return await update.effective_message.reply_text(

@@ -164,6 +164,7 @@ def main():
         'allowed_user_ids': os.environ.get('ALLOWED_TELEGRAM_USER_IDS', '*'),
         'user_names_dict': user_names_dict,
         'enable_quoting': os.environ.get('ENABLE_QUOTING', 'true').lower() == 'true',
+        'enable_latex': os.environ.get('ENABLE_LATEX', 'true').lower() == 'true',
         'enable_image_generation': os.environ.get('ENABLE_IMAGE_GENERATION', 'true').lower() == 'true',
         'enable_transcription': os.environ.get('ENABLE_TRANSCRIPTION', 'true').lower() == 'true',
         'enable_vision': os.environ.get('ENABLE_VISION', 'true').lower() == 'true',

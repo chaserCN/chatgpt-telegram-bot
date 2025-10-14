@@ -10,6 +10,7 @@ from telegram import BotCommandScopeAllGroupChats, Update, constants
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultArticle
 from telegram import InputTextMessageContent, BotCommand
 from telegram.error import RetryAfter, TimedOut, BadRequest
+from telegram.request import HTTPXRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, \
     filters, InlineQueryHandler, CallbackQueryHandler, Application, ContextTypes, CallbackContext
 
@@ -474,7 +475,8 @@ class ChatGPTTelegramBot:
                             text=interpretation,
                             markdown=True,
                             reply_to_message_id=get_reply_to_message_id(self.config, update),
-                            message_thread_id=get_thread_id(update)
+                            message_thread_id=get_thread_id(update),
+                            enable_latex=self.config['enable_latex']
                         )
                     except Exception as e:
                         logging.exception(e)
@@ -604,7 +606,8 @@ class ChatGPTTelegramBot:
                                     sent_message = await send_message_with_retry(update=update,
                                                                                  text=content if len(content) > 0 else "...",
                                                                                  markdown=is_finished,
-                                                                                 message_thread_id=get_thread_id(update))
+                                                                                 message_thread_id=get_thread_id(update),
+                                                                                 enable_latex=self.config['enable_latex'])
                                 except:
                                     pass
                                 continue
@@ -624,7 +627,8 @@ class ChatGPTTelegramBot:
                                                                              text=content,
                                                                              markdown=is_finished,
                                                                              reply_to_message_id=get_reply_to_message_id(self.config, update),
-                                                                             message_thread_id=get_thread_id(update))
+                                                                             message_thread_id=get_thread_id(update),
+                                                                             enable_latex=self.config['enable_latex'])
                             except Exception as e:
                                 print("[BOT] Error:", e)
                                 continue
@@ -682,7 +686,8 @@ class ChatGPTTelegramBot:
                                 text=chunk,
                                 markdown=True,
                                 reply_to_message_id=get_reply_to_message_id(self.config, update) if index == 0 else None,
-                                message_thread_id=get_thread_id(update)
+                                message_thread_id=get_thread_id(update),
+                                enable_latex=self.config['enable_latex']
                             )
                         except Exception as exception:
                             raise exception
@@ -696,7 +701,8 @@ class ChatGPTTelegramBot:
                 text=f"{localized_text('chat_fail', self.config['bot_language'])} {str(e)}",
                 markdown=False,
                 reply_to_message_id=get_reply_to_message_id(self.config, update),
-                message_thread_id=get_thread_id(update)
+                message_thread_id=get_thread_id(update),
+                enable_latex=self.config['enable_latex']
             )
 
         finally:
@@ -933,12 +939,13 @@ class ChatGPTTelegramBot:
         """
         Runs the bot indefinitely until the user presses Ctrl+C
         """
+        request = HTTPXRequest(read_timeout=30.0, connect_timeout=30.0, pool_timeout=30.0)
         builder = ApplicationBuilder() \
             .token(self.config['token']) \
             .post_init(self.post_init) \
-            .concurrent_updates(True)
+            .concurrent_updates(True) \
+            .request(request)
         
-
         
         application = builder.build()
 

@@ -15,6 +15,10 @@ RUN apk add --no-cache \
         ttf-droid \
         ttf-freefont \
         ttf-liberation \
+        # LaTeX dependencies
+        texlive-full \
+        poppler-utils \
+        ghostscript \
         # more fonts
         ;
 
