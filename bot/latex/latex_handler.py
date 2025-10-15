@@ -65,28 +65,33 @@ def _fix_common_latex_errors(text: str) -> str:
 
 def process_text(text: str, output_dir: str = '.') -> tuple[str, list[str] | str]:
     """
-    Обрабатывает входной текст, определяя, является ли он полным
-    LaTeX документом или фрагментом, и рендерит его в изображение.
+    Обрабатывает входной текст.
+    - Если это полный LaTeX документ, рендерит его.
+    - Если это текст с LaTeX-фрагментами, рендерит его.
+    - Если это обычный текст, возвращает его как есть.
     """
-    text = _fix_common_latex_errors(text)
-    text = html.unescape(text)
+    unescaped_text = html.unescape(text)
 
-    # Проверяем, является ли текст полным LaTeX документом
-    if is_full_latex_document(text):
+    # 1. Проверяем на полный LaTeX документ.
+    if is_full_latex_document(unescaped_text):
         print("--- Обнаружен полный LaTeX документ ---")
+        doc_start_index = unescaped_text.find(r'\documentclass')
+        latex_doc_text = unescaped_text[doc_start_index:]
         
-        # Находим начало настоящего LaTeX документа и отрезаем все, что было до него.
-        # Это ключевое исправление.
-        doc_start_index = text.find(r'\documentclass')
-        latex_doc_text = text[doc_start_index:]
+        fixed_latex_doc = _fix_common_latex_errors(latex_doc_text)
         
-        saved_files = process_full_latex_document(latex_doc_text, output_dir=output_dir)
+        saved_files = process_full_latex_document(fixed_latex_doc, output_dir=output_dir)
         return 'image', saved_files
-    else:
-        # Если это не полный документ, считаем его одним большим фрагментом
-        # и рендерим как единое целое.
-        print("--- Обнаружен фрагмент LaTeX. Рендерим как единый документ. ---")
-        full_latex_code = convert_telegram_html_to_latex(text)
+
+    # 2. Проверяем на LaTeX-фрагменты.
+    elif _contains_latex_fragments(unescaped_text):
+        print("--- Обнаружен фрагмент LaTeX. Рендерим. ---")
+        
+        # Для рендеринга фрагмента передаем исходный текст `text`,
+        # так как HTML-парсер ожидает экранированные сущности.
+        fixed_text_fragment = _fix_common_latex_errors(text)
+        full_latex_code = convert_telegram_html_to_latex(fixed_text_fragment)
+        
         output_filename = f"render_{uuid.uuid4()}"
         saved_files = render_latex_document(
             full_latex_code,
@@ -94,3 +99,8 @@ def process_text(text: str, output_dir: str = '.') -> tuple[str, list[str] | str
             output_dir=output_dir
         )
         return 'image', saved_files
+
+    # 3. Если это обычный текст, возвращаем его без изменений.
+    else:
+        print("--- Обычный текст, LaTeX не обнаружен. ---")
+        return 'text', text

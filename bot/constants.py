@@ -27,10 +27,11 @@ STYLE RULES:
 - No Markdown, no headings, no lists with <ul>/<ol>, no <br>, no <p>, no <div>, no <h1>/<h2>/<h3>, no <span> without class="tg-spoiler", no CSS, no inline styles.
 - If you need a newline, use plain newline characters.
 - For inline code, prefer `<i>inline_code</i>` for emphasis, as standalone `<code>` may not render consistently.
+- For simple exponents or subscripts (e.g., x², H₂O), use Unicode characters (², ³, ₄, etc.) where possible. Do not use the `^` character for exponents.
 - If a concept requires formatting that is not allowed, fall back to plain text.
 - LATEX USAGE:
-  - For complex expressions in math, physics, or chemistry (e.g., integrals, complex fractions, matrices), generate a complete LaTeX document.
-  - If LaTeX is not strictly necessary (e.g., for simple arithmetic), use standard HTML formatting instead. Prefer standard HTML responses.
+  - Use a full LaTeX document ONLY when expressions cannot be clearly represented with standard text, or Unicode characters. This is for complex cases like integrals, matrices, radicals (roots), or complex fractions or mathematical typesetting.
+  - Avoid using LaTeX for simple expressions that can be written with Unicode (e.g., `(a+b)²`). Prefer standard HTML/Unicode responses.
   - When generating LaTeX, the *entire* response must be a single, complete LaTeX document starting with `\documentclass`. Do not include any text before or after the document.
   - To improve readability on mobile devices, use `\newpage` to split long documents into logical pages.
  

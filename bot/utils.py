@@ -170,7 +170,7 @@ async def send_message_with_retry(update: Update,
             if processed_type == 'image':
                 sent_messages = []
                 for image_path in processed_content:
-                    #try:
+                    try:
                         with open(image_path, 'rb') as photo_file:
                             message = await update.effective_message.reply_photo(
                                 photo=photo_file,
@@ -178,9 +178,9 @@ async def send_message_with_retry(update: Update,
                                 message_thread_id=message_thread_id
                             )
                         sent_messages.append(message)
-                    #finally:
-                        # if os.path.exists(image_path):
-                        #     os.remove(image_path)
+                    finally:
+                        if os.path.exists(image_path):
+                            os.remove(image_path)
                 return sent_messages[-1] if sent_messages else None
 
             # If it's text, update fixed_text with the (potentially unchanged) text
