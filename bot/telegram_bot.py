@@ -676,21 +676,17 @@ class ChatGPTTelegramBot:
                     if is_direct_result(response):
                         return await handle_direct_result(self.config, update, response)
 
-                    # Split into chunks of 4096 characters (Telegram's message limit)
-                    chunks = split_into_chunks(response)
-
-                    for index, chunk in enumerate(chunks):
-                        try:
-                            await send_message_with_retry(
-                                update=update,
-                                text=chunk,
-                                markdown=True,
-                                reply_to_message_id=get_reply_to_message_id(self.config, update) if index == 0 else None,
-                                message_thread_id=get_thread_id(update),
-                                enable_latex=self.config['enable_latex']
-                            )
-                        except Exception as exception:
-                            raise exception
+                    try:
+                        await send_message_with_retry(
+                            update=update,
+                            text=response,
+                            markdown=True,
+                            reply_to_message_id=get_reply_to_message_id(self.config, update),
+                            message_thread_id=get_thread_id(update),
+                            enable_latex=self.config['enable_latex']
+                        )
+                    except Exception as exception:
+                        raise exception
 
                 await _reply()
 

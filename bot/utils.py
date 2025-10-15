@@ -161,7 +161,7 @@ async def send_message_with_retry(update: Update,
         # Step 1: Always sanitize the text first and try sending.
         fixed_text = fix_telegram_html_formatting(text)
 
-        logging.info(f"Fixed text:\n---\n{fixed_text}\n---")
+        logging.info("sanitazed text:\n---\n%s\n---", fixed_text)
         
         # Process for LaTeX if enabled
         if enable_latex:
@@ -185,29 +185,40 @@ async def send_message_with_retry(update: Update,
 
             # If it's text, update fixed_text with the (potentially unchanged) text
             fixed_text = processed_content
-
-        logging.info(f"Attempting to send message with sanitized HTML:\n---\n{fixed_text}\n---")
         
-        return await update.effective_message.reply_text(
-            text=fixed_text,
-            parse_mode=constants.ParseMode.HTML if markdown else None,
-            reply_to_message_id=reply_to_message_id,
-            message_thread_id=message_thread_id
-        )
+        # Chunk the text and send each chunk
+        chunks = split_into_chunks(fixed_text)
+        sent_messages = []
+        for i, chunk in enumerate(chunks):
+            reply_id = reply_to_message_id if i == 0 else None
+            message = await update.effective_message.reply_text(
+                text=chunk,
+                parse_mode=constants.ParseMode.HTML if markdown else None,
+                reply_to_message_id=reply_id,
+                message_thread_id=message_thread_id
+            )
+            sent_messages.append(message)
+        return sent_messages[-1] if sent_messages else None
+
     except telegram.error.BadRequest as e:
         logging.warning(f"BadRequest after sanitization: {e}. Falling back to plain text.")
 
         try:
             # Step 2 (Fallback): Strip all tags and send as plain text.
             stripped_text = remove_html_tags(text)
-            logging.info(f"Text after remove_html_tags:\n---\n{stripped_text}\n---")
-            
-            return await update.effective_message.reply_text(
-                text=stripped_text,
-                parse_mode=constants.ParseMode.HTML if markdown else None,
-                reply_to_message_id=reply_to_message_id,
-                message_thread_id=message_thread_id
-            )
+            chunks = split_into_chunks(stripped_text)
+            sent_messages = []
+            for i, chunk in enumerate(chunks):
+                reply_id = reply_to_message_id if i == 0 else None
+                message = await update.effective_message.reply_text(
+                    text=chunk,
+                    parse_mode=None, # Plain text, no HTML
+                    reply_to_message_id=reply_id,
+                    message_thread_id=message_thread_id
+                )
+                sent_messages.append(message)
+            return sent_messages[-1] if sent_messages else None
+
         except Exception as e2:
             logging.error(f"Final fallback failed: {e2}. Original text was:\n---\n{text}\n---")
             raise e2  # Re-raise the final, critical error

@@ -89,10 +89,10 @@ def render_latex_document(full_latex_code: str, output_prefix: str, output_dir: 
             # Некоторые ошибки, как \ce, не фатальны.
             if result.returncode != 0 and not pdf_path.exists():
                 print("--- ОШИБКА КОМПИЛЯЦИИ PDFlatex ---")
-                print("--- STDOUT ---")
-                print(result.stdout)
-                print("--- STDERR ---")
-                print(result.stderr)
+                #print("--- STDOUT ---")
+                #print(result.stdout)
+                #print("--- STDERR ---")
+                #print(result.stderr)
                 # Log file might contain more details
                 # log_path = temp_path / "document.log"
                 # if log_path.exists():
