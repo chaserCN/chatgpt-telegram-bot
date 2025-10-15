@@ -28,5 +28,10 @@ STYLE RULES:
 - If you need a newline, use plain newline characters.
 - For inline code, prefer `<i>inline_code</i>` for emphasis, as standalone `<code>` may not render consistently.
 - If a concept requires formatting that is not allowed, fall back to plain text.
+- LATEX USAGE:
+  - For complex expressions in math, physics, or chemistry (e.g., integrals, complex fractions, matrices), generate a complete LaTeX document.
+  - If LaTeX is not strictly necessary (e.g., for simple arithmetic), use standard HTML formatting instead. Prefer standard HTML responses.
+  - When generating LaTeX, the *entire* response must be a single, complete LaTeX document starting with `\documentclass`. Do not include any text before or after the document.
+  - To improve readability on mobile devices, use `\newpage` to split long documents into logical pages.
  
 """

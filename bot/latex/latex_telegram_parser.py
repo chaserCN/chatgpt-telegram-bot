@@ -1,13 +1,15 @@
 import re
 from bs4 import BeautifulSoup, NavigableString
 import uuid
+import html
+
 
 # Этот шаблон используется для создания полноценного LaTeX документа
 # из фрагментов, найденных в тексте.
 _LATEX_PREAMBLE_TEMPLATE_RAW = r"""
-\documentclass[12pt]{scrartcl}
-\usepackage[utf8]{inputenc}
-\usepackage[T2A]{fontenc}
+\documentclass[12pt]{{scrartcl}}
+\usepackage[utf8]{{inputenc}}
+\usepackage[T2A]{{fontenc}}
 \usepackage{{amsmath}}
 \usepackage{{amssymb}}
 \usepackage{{graphicx}}
@@ -29,7 +31,6 @@ _LATEX_PREAMBLE_TEMPLATE_RAW = r"""
 """
 LATEX_PREAMBLE_TEMPLATE = _LATEX_PREAMBLE_TEMPLATE_RAW.replace('{{lang}}', '{lang}')
 
-
 # Словарь для экранирования специальных символов LaTeX
 LATEX_SPECIAL_CHARS = {
     '&': r'\&',
@@ -42,26 +43,28 @@ LATEX_SPECIAL_CHARS = {
     '~': r'\textasciitilde{}',
     '^': r'\textasciicircum{}',
     '\\': r'\textbackslash{}',
+    '<': r'\textless{}',
+    '>': r'\textgreater{}',
+    '"': r"''", # Простой способ экранировать кавычки
 }
+
+# Регулярное выражение для поиска всех видов LaTeX-вставок
+# [\s\S] позволяет $$...$$ быть многострочным. [^\n\$] заставляет $...$ быть однострочным.
+LATEX_REGEX = re.compile(r'(\$\$[\s\S]+?\$\$|\$[^\n\$]+?\$|\\\[[\s\S]+?\\\]|\\\([^\n]+?\\\))')
 
 def escape_latex(text: str) -> str:
     """Экранирует специальные LaTeX символы в строке."""
     return "".join(LATEX_SPECIAL_CHARS.get(char, char) for char in text)
 
+
 def _recursive_html_to_latex(tag) -> str:
     """Рекурсивно обходит дерево BeautifulSoup и конвертирует его в LaTeX."""
     if isinstance(tag, NavigableString):
-        # Экранируем, только если это не наш плейсхолдер
-        text = str(tag)
-        if "LATEX_TOKEN_" in text or "__PRE_BLOCK_" in text:
-            return text
-        return escape_latex(text)
-
-    # Для <pre> тегов прекращаем рекурсивный обход и возвращаем плейсхолдер
-    if tag.name == 'pre':
-        # Этот код больше не нужен здесь, так как <pre> изолированы заранее
-        # Мы просто должны найти соответствующий плейсхолдер в его содержимом
-        return "".join(_recursive_html_to_latex(child) for child in tag.contents)
+        # На этом этапе мы просто экранируем ВЕСЬ текст.
+        # Формулы будут восстановлены позже.
+        text_to_escape = str(tag)
+        escaped_text = escape_latex(text_to_escape)
+        return escaped_text
 
     content = "".join(_recursive_html_to_latex(child) for child in tag.contents)
 
@@ -88,67 +91,59 @@ def _recursive_html_to_latex(tag) -> str:
         return f"\\href{{{url}}}{{{content}}}"
     
     if tag.name == 'br':
-        return r'\\\\'
+        return "__BR_TAG__" # Используем плейсхолдер
         
     # Для неизвестных тегов (вроде span, body, html) просто возвращаем их содержимое
     return content
 
 
-def convert_telegram_html_to_latex(html_text: str, lang: str = 'russian') -> str:
+def convert_telegram_html_to_latex(html_text: str) -> str:
     """
     Конвертирует HTML-разметку Telegram в полноценный LaTeX документ.
-    Если входной текст уже является LaTeX-документом, возвращает его без изменений.
     """
-    # 1. Проверяем, не является ли это уже полноценным документом
-    if r'\documentclass' in html_text and r'\begin{document}' in html_text:
-        return html_text
+    # 1. СНАЧАЛА "разэкранируем" HTML сущности. ЭТО КЛЮЧ.
+    text_unscaped = html.unescape(html_text)
 
-    # 2. Изолируем <pre> блоки, чтобы защитить их от обработки
+    # 2. Проверяем, не является ли это уже полноценным документом
+    if r'\documentclass' in text_unscaped and r'\begin{document}' in text_unscaped:
+        return text_unscaped
+
+    # 3. Изолируем <pre> блоки, так как их содержимое не должно парситься
     pre_parts = []
     pre_regex = re.compile(r'(<pre>.*?</pre>)', re.DOTALL)
     def isolate_pre_match(match):
         placeholder = f"__PRE_BLOCK_{len(pre_parts)}__"
-        pre_parts.append(match.group(0))
+        pre_soup = BeautifulSoup(match.group(0), 'html.parser')
+        pre_parts.append(pre_soup.get_text())
         return placeholder
     
-    html_no_pre = pre_regex.sub(isolate_pre_match, html_text)
+    html_no_pre = pre_regex.sub(isolate_pre_match, text_unscaped)
 
-    # 3. Изолируем LaTeX-вставки
-    latex_parts = []
-    # Регулярное выражение для поиска всех видов LaTeX-разделителей
-    latex_regex = re.compile(r'(\$\$[^\$]+\$\$|\$[^\$]+\$|\\\[.+?\\\]|\\\(.+?\\\))', re.DOTALL)
-    
-    def isolate_latex_match(match):
-        placeholder = f"LATEX_TOKEN_{len(latex_parts)}"
-        latex_parts.append(match.group(0))
-        return placeholder
-
-    sanitized_html = latex_regex.sub(isolate_latex_match, html_no_pre)
-
-    # 4. Экранируем HTML сущности, которые не являются частью тегов
-    # BeautifulSoup делает это автоматически при парсинге, так что ручное экранирование не нужно.
-
-    # 5. Парсим HTML с помощью BeautifulSoup
-    # 'html.parser' - встроенный, не требует lxml
-    soup = BeautifulSoup(f"<body>{sanitized_html}</body>", 'html.parser')
-
-    # 6. Рекурсивно конвертируем дерево в LaTeX
+    # 4. Парсим HTML и экранируем ВЕСЬ текстовый контент
+    soup = BeautifulSoup(f"<body>{html_no_pre}</body>", 'html.parser')
     body_content = _recursive_html_to_latex(soup)
 
-    # Restore placeholders
-    for i, item in enumerate(latex_parts):
-        # Просто восстанавливаем LaTeX фрагменты без всяких оберток
-        body_content = body_content.replace(f'LATEX_TOKEN_{i}', item, 1)
-
+    # 5. Восстанавливаем <pre> плейсхолдеры
     for i, item in enumerate(pre_parts):
-        body_content = body_content.replace(f'__PRE_BLOCK_{i}__', f'\\begin{{verbatim}}\n{item}\n\\end{{verbatim}}', 1)
+        # Заменяем плейсхолдеры на \begin{verbatim}, плейсхолдеры не были экранированы
+        body_content = body_content.replace(f'__PRE_BLOCK_{i}__'.replace('_', r'\_'), f'\\begin{{verbatim}}\n{item}\n\\end{{verbatim}}', 1)
 
-    # 9. Собираем финальный документ
-    # Определяем язык (пока что статически, можно расширить)
-    # Простой эвристический метод для определения языка
-    # lang = 'ukrainian' if any(c in 'їієґ' for c in html_text) else 'russian' # This line is removed as per the new_code
+    # 6. Теперь "разэкранируем" LaTeX-формулы, которые были экранированы на шаге 4
+    # Мы ищем оригинальные формулы в исходном, неэкранированном тексте
+    # и заменяем их экранированные версии в body_content.
+    latex_matches = LATEX_REGEX.finditer(text_unscaped)
+    for match in latex_matches:
+        original_formula = match.group(0)
+        escaped_formula = escape_latex(original_formula)
+        if escaped_formula in body_content:
+            body_content = body_content.replace(escaped_formula, original_formula)
     
-    # Аккуратно форматируем только плейсхолдер {lang}
-    preamble = LATEX_PREAMBLE_TEMPLATE.format(lang=lang)
-    body = process_document_body(html_text) # Используем новую функцию
-    return f"{preamble}\\begin{{document}}\\Huge\n{body}\n\\end{{document}}"
+    # Заменяем плейсхолдер для <br> на реальный перенос строки LaTeX
+    body_content = body_content.replace("__BR_TAG__", r'\\')
+
+
+    # 7. Собираем финальный документ
+    lang = 'ukrainian' if any(c in 'їієґ' for c in html_text) else 'russian'
+    preamble = _LATEX_PREAMBLE_TEMPLATE_RAW.format(lang=lang)
+    final_latex = f"{preamble}\\begin{{document}}\\Huge\n{body_content}\n\\end{{document}}"
+    return final_latex

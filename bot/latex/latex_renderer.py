@@ -128,10 +128,10 @@ def render_latex_document(full_latex_code: str, output_prefix: str, output_dir: 
 
             final_images = []
             if len(cropped_images) > 1:
-                print("5. Выравниваем все страницы по одной ширине...")
+                print("5. Выравниваем все страницы по ширине...")
                 # Находим максимальную ширину
                 max_width = max(img.width for img in cropped_images)
-
+        
                 for img in cropped_images:
                     # Создаем новый холст с белым фоном
                     # Ширина - максимальная, высота - своя.
@@ -142,12 +142,27 @@ def render_latex_document(full_latex_code: str, output_prefix: str, output_dir: 
             else:
                 final_images = cropped_images
 
-            print(f"6. Сохраняем страницы как отдельные файлы в '{output_dir}'...")
+            print(f"6. Сохраняем и обрабатываем страницы в '{output_dir}'...")
             for i, img in enumerate(final_images):
                 img_path = Path(output_dir) / f"{output_prefix}_page_{i+1}.png"
-                img.save(img_path)
+
+                # --- Изменение размера изображения с помощью Pillow ---
+                # Устанавливаем максимальную ширину, чтобы избежать слишком больших картинок
+                max_width = 1080
+                if img.width > max_width:
+                    # Рассчитываем новую высоту для сохранения пропорций
+                    aspect_ratio = img.height / img.width
+                    new_height = int(max_width * aspect_ratio)
+                    
+                    # Изменяем размер с использованием качественного фильтра
+                    resized_img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+                    resized_img.save(img_path)
+                    print(f"   - Сохранено и уменьшено до {max_width}x{new_height}: {img_path}")
+                else:
+                    img.save(img_path)
+                    print(f"   - Сохранено (размер {img.width}x{img.height}): {img_path}")
+
                 saved_files.append(str(img_path))
-                print(f"   - Сохранено: {img_path}")
         else:
             print("❌ Рендеринг не удался! PDF не удалось конвертировать.")
             return []

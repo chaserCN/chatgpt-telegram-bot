@@ -6,8 +6,9 @@ from uuid import uuid4
 from pathlib import Path
 
 from .latex_renderer import render_latex_document
-from .latex_telegram_parser import convert_telegram_html_to_latex, escape_latex
 from .latex_full_document_handler import process_full_latex_document
+from .latex_telegram_parser import convert_telegram_html_to_latex
+from .latex_utils import is_valid_latex, format_text_for_display
 
 
 def is_full_latex_document(text: str) -> bool:
