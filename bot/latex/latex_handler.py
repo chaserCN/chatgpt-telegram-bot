@@ -54,18 +54,18 @@ def _fix_common_latex_errors(text: str) -> str:
     """
     # Заменяем \mathbf{кириллица} на \textbf{кириллица}
     # Это исправляет ошибку "Command \CYRA invalid in math mode"
-    text = re.sub(r'\\mathbf\{([^{}]*[а-яА-Я][^{}]*)\}', r'\\textbf{\1}', text)
+    text = re.sub(r'\\mathbf\{([^{}]*[а-яА-Я][^{}]*)\}', r'\\textbf{\g<1>}', text)
     
     # Заменяем \text{кириллица} на \mbox{кириллица} внутри математического режима
     # Это решает аналогичную проблему для единиц измерения и т.д.
-    text = re.sub(r'\\text\{([^{}]*[а-яА-Я][^{}]*)\}', r'\\mbox{\1}', text)
+    text = re.sub(r'\\text\{([^{}]*[а-яА-Я][^{}]*)\}', r'\\mbox{\g<1>}', text)
     
     # Исправляем отображение кириллицы в химических формулах \ce{}
     # из пакета mhchem. Оборачиваем кириллический текст в \text{...}.
     def wrap_cyrillic_in_text(match):
         ce_content = match.group(1)
         # Оборачиваем все последовательности кириллических букв
-        fixed_content = re.sub(r'([а-яА-Я]+)', r'\\text{\1}', ce_content)
+        fixed_content = re.sub(r'([а-яА-Я]+)', r'\\text{\g<1>}', ce_content)
         return f'\\ce{{{fixed_content}}}'
 
     text = re.sub(r'\\ce\{([\s\S]+?)\}', wrap_cyrillic_in_text, text)
@@ -73,7 +73,7 @@ def _fix_common_latex_errors(text: str) -> str:
     return text
 
 
-def process_text(text: str, output_dir: str = '.') -> tuple[str, list[str] | str]:
+def process_text(text: str, output_dir: str = '.', debug: bool = False) -> tuple[str, list[str] | str]:
     r"""
     Обрабатывает входной текст.
     - Если это полный LaTeX документ, рендерит его.
@@ -90,7 +90,7 @@ def process_text(text: str, output_dir: str = '.') -> tuple[str, list[str] | str
         
         fixed_latex_doc = _fix_common_latex_errors(latex_doc_text)
         
-        saved_files = process_full_latex_document(fixed_latex_doc, output_dir=output_dir)
+        saved_files = process_full_latex_document(fixed_latex_doc, output_dir=output_dir, debug=debug)
         return 'image', saved_files
 
     # 2. Проверяем на LaTeX-фрагменты.
@@ -106,7 +106,8 @@ def process_text(text: str, output_dir: str = '.') -> tuple[str, list[str] | str
         saved_files = render_latex_document(
             full_latex_code,
             output_filename,
-            output_dir=output_dir
+            output_dir=output_dir,
+            debug=debug
         )
         return 'image', saved_files
 

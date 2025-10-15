@@ -4,10 +4,48 @@ import html
 
 from .latex_renderer import render_latex_document
 
-def process_full_latex_document(latex_document: str, output_dir: str = '.') -> list[str]:
+def process_full_latex_document(latex_document: str, output_dir: str = '.', debug: bool = False) -> list[str]:
     """
     Обрабатывает полный LaTeX документ, который уже был проверен и очищен.
     """
+    # --- Автоматическое добавление пакетов для кириллицы ---
+    # Проверяем на наличие кириллических символов (включая украинские)
+    if re.search(r'[а-яА-Яїієґ]', latex_document):
+        
+        # Определяем язык по специфичным украинским буквам
+        lang = 'ukrainian' if any(c in 'їієґ' for c in latex_document) else 'russian'
+        
+        # Проверяем, подключен ли babel
+        is_babel_present = re.search(r'\\usepackage.*\{babel\}', latex_document)
+        
+        required_packages = ""
+        if r'\usepackage[T2A]{fontenc}' not in latex_document:
+            required_packages += r'\usepackage[T2A]{fontenc}' + '\n'
+        
+        if not is_babel_present:
+            required_packages += f'\\usepackage[{lang}]{{babel}}' + '\n'
+
+        if required_packages:
+            # Вставляем пакеты после \documentclass{...}
+            
+            # Экранируем бэкслэши для re.subn
+            repl = required_packages.replace('\\', r'\\')
+
+            latex_document, count = re.subn(
+                r'(\\documentclass.*?\{.*?\})',
+                r'\g<1>' + '\n' + repl,
+                latex_document,
+                count=1
+            )
+            if count == 0:
+                 # Если \documentclass не найден, вставляем перед \begin{document}
+                latex_document, _ = re.subn(
+                    r'(\\begin\{document\})',
+                    repl + r' \g<1>',
+                    latex_document,
+                    count=1
+                )
+
     # --- Безопасное увеличение размера шрифта ---
     # 1. Гарантируем, что используется класс scrartcl
     latex_document = latex_document.replace('{article}', '{scrartcl}')
@@ -90,5 +128,5 @@ def process_full_latex_document(latex_document: str, output_dir: str = '.') -> l
     final_latex_code = latex_document
     
     output_filename = f"render_{uuid.uuid4()}"
-    saved_files = render_latex_document(final_latex_code, output_filename, output_dir=output_dir)
+    saved_files = render_latex_document(final_latex_code, output_filename, output_dir=output_dir, debug=debug)
     return saved_files
