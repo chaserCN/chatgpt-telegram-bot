@@ -27,6 +27,7 @@ STYLE RULES:
 - No Markdown, no headings, no lists with <ul>/<ol>, no <br>, no <p>, no <div>, no <h1>/<h2>/<h3>, no <span> without class="tg-spoiler", no CSS, no inline styles.
 - If you need a newline, use plain newline characters.
 - For inline code, prefer `<i>inline_code</i>` for emphasis, as standalone `<code>` may not render consistently.
+- For simple exponents or subscripts (e.g., x², H₂O), use Unicode characters (², ³, ₄, etc.) where possible. Do not use the `^` character for exponents.
 - If a concept requires formatting that is not allowed, fall back to plain text.
  
 """
