@@ -1,5 +1,5 @@
 FROM surnet/alpine-wkhtmltopdf:3.16.2-0.12.6-full as wkhtmltopdf
-FROM python:3.9-alpine
+FROM python:3.11-alpine
 
 RUN echo 'https://dl-cdn.alpinelinux.org/alpine/edge/testing' >> /etc/apk/repositories
 
