@@ -56,10 +56,6 @@ def _fix_common_latex_errors(text: str) -> str:
     # Это исправляет ошибку "Command \CYRA invalid in math mode"
     text = re.sub(r'\\mathbf\{([^{}]*[а-яА-Я][^{}]*)\}', r'\\textbf{\g<1>}', text)
     
-    # Заменяем \text{кириллица} на \mbox{кириллица} внутри математического режима
-    # Это решает аналогичную проблему для единиц измерения и т.д.
-    text = re.sub(r'\\text\{([^{}]*[а-яА-Я][^{}]*)\}', r'\\mbox{\g<1>}', text)
-    
     # Исправляем отображение кириллицы в химических формулах \ce{}
     # из пакета mhchem. Оборачиваем кириллический текст в \text{...}.
     def wrap_cyrillic_in_text(match):

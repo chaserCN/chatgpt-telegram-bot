@@ -59,13 +59,13 @@ def process_full_latex_document(latex_document: str, output_dir: str = '.', debu
         # Удаляем старые размеры шрифта из опций
         cleaned_options = re.sub(r'(\d+)pt,?', '', options)
         
-        # Собираем новые опции. Вставляем 16pt в начало.
+        # Собираем новые опции. Вставляем 14pt в начало.
         # Убираем скобки и пустое пространство, затем собираем заново.
         options_list = [opt.strip() for opt in cleaned_options.strip('[]').split(',') if opt.strip()]
         
         # Добавляем наш размер шрифта, если его еще нет
-        if '16pt' not in options_list:
-            options_list.insert(0, '16pt')
+        if '14pt' not in options_list:
+            options_list.insert(0, '14pt')
 
         final_options_str = f"[{','.join(options_list)}]"
         
