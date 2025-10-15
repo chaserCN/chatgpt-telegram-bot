@@ -18,7 +18,8 @@ _LATEX_PREAMBLE_TEMPLATE_RAW = r"""
 \usetikzlibrary{{angles,quotes}}
 \usepackage{{caption}}
 \usepackage{{titlesec}}
-\usepackage[shorthands=off,{lang}]{{babel}} 
+\titleformat{{\section}}{{\Huge\bfseries}}{{\thesection}}{{1em}}{{}}
+\usepackage[shorthands=off,{{lang}}]{{babel}} 
 \usepackage{{microtype}} % Improves typography and spacing
 \usepackage{{cancel}}
 \usepackage{{ulem}}

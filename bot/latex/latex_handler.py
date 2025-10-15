@@ -12,7 +12,7 @@ from .latex_utils import is_valid_latex, format_text_for_display
 
 
 def is_full_latex_document(text: str) -> bool:
-    """
+    r"""
     Проверяет, является ли текст полным LaTeX документом,
     ища \documentclass в любом месте текста.
     """
@@ -48,7 +48,7 @@ def _contains_latex_fragments(text: str) -> bool:
     return bool(latex_pattern.search(text))
 
 def _fix_common_latex_errors(text: str) -> str:
-    """
+    r"""
     Исправляет распространенные ошибки в LaTeX коде,
     например, использование \mathbf для кириллического текста.
     """
@@ -60,11 +60,21 @@ def _fix_common_latex_errors(text: str) -> str:
     # Это решает аналогичную проблему для единиц измерения и т.д.
     text = re.sub(r'\\text\{([^{}]*[а-яА-Я][^{}]*)\}', r'\\mbox{\1}', text)
     
+    # Исправляем отображение кириллицы в химических формулах \ce{}
+    # из пакета mhchem. Оборачиваем кириллический текст в \text{...}.
+    def wrap_cyrillic_in_text(match):
+        ce_content = match.group(1)
+        # Оборачиваем все последовательности кириллических букв
+        fixed_content = re.sub(r'([а-яА-Я]+)', r'\\text{\1}', ce_content)
+        return f'\\ce{{{fixed_content}}}'
+
+    text = re.sub(r'\\ce\{([\s\S]+?)\}', wrap_cyrillic_in_text, text)
+    
     return text
 
 
 def process_text(text: str, output_dir: str = '.') -> tuple[str, list[str] | str]:
-    """
+    r"""
     Обрабатывает входной текст.
     - Если это полный LaTeX документ, рендерит его.
     - Если это текст с LaTeX-фрагментами, рендерит его.

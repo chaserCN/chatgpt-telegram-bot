@@ -8,18 +8,40 @@ def process_full_latex_document(latex_document: str, output_dir: str = '.') -> l
     """
     Обрабатывает полный LaTeX документ, который уже был проверен и очищен.
     """
-    # --- Увеличение размера шрифта через команду \Huge ---
-    # Возвращаемся к стандартному 12pt и классу scrartcl
+    # --- Безопасное увеличение размера шрифта ---
+    # 1. Гарантируем, что используется класс scrartcl
     latex_document = latex_document.replace('{article}', '{scrartcl}')
     latex_document = latex_document.replace('{extarticle}', '{scrartcl}')
 
-    # Устанавливаем базовый размер 12pt
-    latex_document, count = re.subn(r'\\documentclass\[', r'\\documentclass[12pt,', latex_document, count=1)
-    if count == 0:
-        latex_document, count = re.subn(r'\\documentclass\{', r'\\documentclass[12pt]{', latex_document, count=1)
+    # 2. Используем re.sub с функцией для точечной замены только в \documentclass
+    def update_documentclass(match):
+        options = match.group(1) or '[]'  # [12pt,a4paper] или []
+        doc_class = match.group(2)      # {scrartcl}
 
-    # Вставляем \Huge после начала документа
-    latex_document = latex_document.replace(r'\begin{document}', r'\begin{document}\Huge', 1)
+        # Удаляем старые размеры шрифта из опций
+        cleaned_options = re.sub(r'(\d+)pt,?', '', options)
+        
+        # Собираем новые опции. Вставляем 16pt в начало.
+        # Убираем скобки и пустое пространство, затем собираем заново.
+        options_list = [opt.strip() for opt in cleaned_options.strip('[]').split(',') if opt.strip()]
+        
+        # Добавляем наш размер шрифта, если его еще нет
+        if '16pt' not in options_list:
+            options_list.insert(0, '16pt')
+
+        final_options_str = f"[{','.join(options_list)}]"
+        
+        return f"\\documentclass{final_options_str}{doc_class}"
+
+    # Ищем \documentclass с опциями или без
+    # и применяем нашу функцию для замены
+    pattern = r'\\documentclass(\[.*?\])?(\{.*?\})'
+    latex_document, count = re.subn(pattern, update_documentclass, latex_document, count=1)
+    
+    # Если \documentclass не был найден (очень редкий случай),
+    # то ничего не делаем, чтобы не сломать документ.
+    if count == 0:
+        print("⚠️  Warning: \\documentclass не найден. Размер шрифта не изменен.")
 
 
     # --- Исправление конфликта пакета Babel ---

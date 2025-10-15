@@ -126,23 +126,9 @@ def render_latex_document(full_latex_code: str, output_prefix: str, output_dir: 
                 if (cropped := _crop_image_with_numpy(i, padding=40)) is not None
             ]
 
-            final_images = []
-            if len(cropped_images) > 1:
-                print("5. Выравниваем все страницы по ширине...")
-                # Находим максимальную ширину
-                max_width = max(img.width for img in cropped_images)
-        
-                for img in cropped_images:
-                    # Создаем новый холст с белым фоном
-                    # Ширина - максимальная, высота - своя.
-                    canvas = Image.new('RGB', (max_width, img.height), 'white')
-                    # Вклеиваем обрезанное изображение по левому краю
-                    canvas.paste(img, (0, 0))
-                    final_images.append(canvas)
-            else:
-                final_images = cropped_images
+            final_images = cropped_images
 
-            print(f"6. Сохраняем и обрабатываем страницы в '{output_dir}'...")
+            print(f"5. Сохраняем и обрабатываем страницы в '{output_dir}'...")
             for i, img in enumerate(final_images):
                 img_path = Path(output_dir) / f"{output_prefix}_page_{i+1}.png"
 
