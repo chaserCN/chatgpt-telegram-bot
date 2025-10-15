@@ -4,78 +4,154 @@ import subprocess
 import tempfile
 from pathlib import Path
 from pdf2image import convert_from_bytes
+from PIL import Image
+import numpy as np
 
-def render_latex_document(full_latex_code: str, output_prefix: str, output_dir: str = '.'):
+def _crop_image_with_numpy(img: Image.Image, padding: int = 20) -> Image.Image | None:
+    """
+    Обрезает изображение, удаляя белые поля с помощью numpy.
+    Возвращает None, если изображение полностью белое.
+    """
+    # Convert image to numpy array
+    np_array = np.array(img)
+    
+    # Find non-white pixels (assuming white is [255, 255, 255])
+    # For grayscale, the check would be different
+    if len(np_array.shape) == 3: # RGB or RGBA
+        non_white_pixels = np.any(np_array[:, :, :3] != 255, axis=2)
+    else: # Grayscale
+        non_white_pixels = np_array != 255
+        
+    # Проверяем, есть ли вообще не-белые пиксели
+    if not np.any(non_white_pixels):
+        print("   - Обнаружена полностью белая страница, пропускаем.")
+        return None
+
+    # Get the bounding box of the non-white pixels
+    rows = np.any(non_white_pixels, axis=1)
+    cols = np.any(non_white_pixels, axis=0)
+    
+    rmin, rmax = np.where(rows)[0][[0, -1]]
+    cmin, cmax = np.where(cols)[0][[0, -1]]
+
+    # Обрезаем и добавляем отступы
+    rmin = max(0, rmin - padding)
+    rmax = min(img.height, rmax + padding)
+    cmin = max(0, cmin - padding)
+    cmax = min(img.width, cmax + padding)
+    
+    return img.crop((cmin, rmin, cmax, rmax))
+
+
+def render_latex_document(full_latex_code: str, output_prefix: str, output_dir: str = '.') -> list[str]:
     """
     Рендерит полный LaTeX документ, сохраняя каждую страницу 
     как отдельное, обрезанное изображение в указанную директорию.
     """
-    # Убедимся, что выходная директория существует
-    os.makedirs(output_dir, exist_ok=True)
+    # Create the output directory if it doesn't exist
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
-    print("1. Создаем временные файлы...")
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-        tex_filename = temp_path / "document.tex"
-        pdf_filename = temp_path / "document.pdf"
-
-        # Создаем подпапку для шрифтов
-        temp_font_dir = temp_path / "Fonts"
-        os.makedirs(temp_font_dir)
-
-        # Копируем шрифты
-        font_dir = "Fonts"
-        print(f"2. Копируем шрифты из '{font_dir}' в '{temp_font_dir}'...")
-        if os.path.isdir(font_dir):
-            for font_file in os.listdir(font_dir):
-                if font_file.upper().endswith(".TTF"):
-                    shutil.copy(os.path.join(font_dir, font_file), temp_font_dir)
-        else:
-            print(f"   - Внимание: Папка '{font_dir}' не найдена.")
-
-        with open(tex_filename, "w", encoding="utf-8") as f:
+        tex_path = temp_path / "document.tex"
+        pdf_path = temp_path / "document.pdf"
+        
+        print("\n--- РЕНДЕРИНГ LATEX ---")
+        print("1. Создаем временные файлы...")
+            
+        with open(tex_path, 'w', encoding='utf-8') as f:
             f.write(full_latex_code)
-        print(f"   - Создан {tex_filename}")
+        print(f"   - Создан {tex_path}")
 
-        # Запускаем lualatex
-        print("3. Запускаем lualatex...")
+        # --- Dynamically find TeX executables ---
+        pdflatex_path = shutil.which("pdflatex") or "/Library/TeX/texbin/pdflatex"
+        tex_bin_path = Path(pdflatex_path).parent
+        pdfcrop_path = tex_bin_path / "pdfcrop"
+        # ---
+
+        print("2. Запускаем pdflatex...")
+
+        # Run pdflatex twice for references and layout
         for i in range(2):
             print(f"   - Проход {i+1}/2...")
+            
             result = subprocess.run(
-                ["/usr/local/texlive/2025basic/bin/universal-darwin/lualatex", "-interaction=nonstopmode", tex_filename.name],
-                cwd=temp_path, capture_output=True, text=True, encoding='utf-8'
+                [pdflatex_path, "-interaction=nonstopmode", tex_path.name],
+                cwd=temp_path, capture_output=True, text=True, encoding='utf-8', errors='ignore'
             )
-            if result.returncode != 0:
-                print("\n--- ОШИБКА КОМПИЛЯЦИИ LUALATEX ---")
+            
+            print(f"   - Содержимое временной папки после прохода {i+1}:")
+            for f in temp_path.iterdir():
+                print(f"     - {f.name}")
+
+            # Продолжаем, даже если есть ошибки, но PDF файл был создан.
+            # Некоторые ошибки, как \ce, не фатальны.
+            if result.returncode != 0 and not pdf_path.exists():
+                print("--- ОШИБКА КОМПИЛЯЦИИ PDFlatex ---")
+                print("--- STDOUT ---")
                 print(result.stdout)
-                print("---------------------------------\n")
-                with open("debug_error.tex", "w", encoding='utf-8') as f:
+                print("--- STDERR ---")
+                print(result.stderr)
+                # Log file might contain more details
+                log_path = temp_path / "document.log"
+                if log_path.exists():
+                    print("--- document.log ---")
+                    print(log_path.read_text(encoding='utf-8', errors='ignore'))
+                        
+                # Сохраняем .tex для дебага
+                debug_file_path = Path(output_dir) / f"debug_{output_prefix}.tex"
+                with open(debug_file_path, 'w', encoding='utf-8') as f:
                     f.write(full_latex_code)
                 print("⚠️  Исходный .tex файл сохранен как 'debug_error.tex'.")
-                return
+                return [] # Возвращаем пустой список, если PDF не создан
 
-        if not pdf_filename.exists():
-            print(f"❌ Рендеринг не удался! lualatex не создал PDF.")
+        if not pdf_path.exists():
+            print(f"❌ Рендеринг не удался! pdflatex не создал PDF.")
             print("Содержимое временной папки:")
             for f in temp_path.iterdir(): print(f"  - {f.name}")
-            return
+            return []
 
-        print("4. Конвертируем PDF в изображение...")
-        images = convert_from_bytes(pdf_filename.read_bytes(), dpi=200)
+        print("3. Конвертируем PDF в изображение...")
+        images = convert_from_bytes(pdf_path.read_bytes(), dpi=300)
         print(f"   - Получено страниц: {len(images)}")
 
-        if not images:
+        # Crop images and save
+        saved_files = []
+        if images:
+            print(f"4. Обрезаем пустые поля у каждой страницы...")
+            # Обрезаем и сразу отфильтровываем пустые (None) страницы
+            cropped_images = [
+                cropped for i in images
+                if (cropped := _crop_image_with_numpy(i, padding=40)) is not None
+            ]
+
+            final_images = []
+            if len(cropped_images) > 1:
+                print("5. Выравниваем все страницы по одной ширине...")
+                # Находим максимальную ширину
+                max_width = max(img.width for img in cropped_images)
+
+                for img in cropped_images:
+                    # Создаем новый холст с белым фоном
+                    # Ширина - максимальная, высота - своя.
+                    canvas = Image.new('RGB', (max_width, img.height), 'white')
+                    # Вклеиваем обрезанное изображение по левому краю
+                    canvas.paste(img, (0, 0))
+                    final_images.append(canvas)
+            else:
+                final_images = cropped_images
+
+            print(f"6. Сохраняем страницы как отдельные файлы в '{output_dir}'...")
+            for i, img in enumerate(final_images):
+                img_path = Path(output_dir) / f"{output_prefix}_page_{i+1}.png"
+                img.save(img_path)
+                saved_files.append(str(img_path))
+                print(f"   - Сохранено: {img_path}")
+        else:
             print("❌ Рендеринг не удался! PDF не удалось конвертировать.")
             return []
 
-        print(f"5. Сохраняем страницы как отдельные файлы в '{output_dir}'...")
-        saved_files = []
-        for i, img in enumerate(images):
-            output_filename = os.path.join(output_dir, f"{output_prefix}_page_{i+1}.png")
-            img.save(output_filename, optimize=True)
-            print(f"   - Создан файл '{output_filename}'")
-            saved_files.append(output_filename)
-        
         print(f"\n✅ Рендеринг успешно завершен!")
         print(f"📁 Проверьте итоговые файлы с префиксом '{output_prefix}'")
         return saved_files

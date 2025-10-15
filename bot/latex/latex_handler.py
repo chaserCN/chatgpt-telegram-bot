@@ -1,10 +1,22 @@
 import re
 import os
+import uuid
+import html
 from uuid import uuid4
+from pathlib import Path
 
-from .latex_doc_parser import parse_ai_latex, build_latex_for_rendering
 from .latex_renderer import render_latex_document
-from .latex_telegram_format_parser import convert_telegram_html_to_latex, escape_latex
+from .latex_telegram_parser import convert_telegram_html_to_latex, escape_latex
+from .latex_full_document_handler import process_full_latex_document
+
+
+def is_full_latex_document(text: str) -> bool:
+    """
+    Проверяет, является ли текст полным LaTeX документом,
+    ища \documentclass в любом месте текста.
+    """
+    return r'\documentclass' in text
+
 
 def _find_main_latex_document(text: str) -> tuple[str, str, str] | None:
     """
@@ -34,56 +46,50 @@ def _contains_latex_fragments(text: str) -> bool:
     """, re.VERBOSE)
     return bool(latex_pattern.search(text))
 
-def process_text(input_text: str, output_dir: str = 'output') -> tuple[str, str | list[str]]:
+def _fix_common_latex_errors(text: str) -> str:
     """
-    Processes an input string to detect and render LaTeX.
-
-    Args:
-        input_text: The string to process.
-        output_dir: The directory to save rendered images.
-
-    Returns:
-        A tuple of (type, content):
-        - ('image', ['/path/to/image1.png', ...]) if rendered.
-        - ('text', 'original text') if no LaTeX is found.
+    Исправляет распространенные ошибки в LaTeX коде,
+    например, использование \mathbf для кириллического текста.
     """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    # Заменяем \mathbf{кириллица} на \textbf{кириллица}
+    # Это исправляет ошибку "Command \CYRA invalid in math mode"
+    text = re.sub(r'\\mathbf\{([^{}]*[а-яА-Я][^{}]*)\}', r'\\textbf{\1}', text)
+    
+    # Заменяем \text{кириллица} на \mbox{кириллица} внутри математического режима
+    # Это решает аналогичную проблему для единиц измерения и т.д.
+    text = re.sub(r'\\text\{([^{}]*[а-яА-Я][^{}]*)\}', r'\\mbox{\1}', text)
+    
+    return text
 
-    doc_parts = _find_main_latex_document(input_text)
 
-    # Case 1: Full LaTeX document found
-    if doc_parts:
-        before_text, latex_document, after_text = doc_parts
-        
-        parsed_content = parse_ai_latex(latex_document)
-        
-        extra_text_parts = []
-        if before_text.strip():
-            extra_text_parts.append(escape_latex(before_text.strip()))
-        if after_text.strip():
-            extra_text_parts.append(escape_latex(after_text.strip()))
-        
-        extra_text = r" \par ".join(extra_text_parts)
-            
-        if extra_text:
-            # Prepend extra text to the existing body
-            parsed_content['body'] = extra_text + r" \newpage " + parsed_content.get('body', '')
+def process_text(text: str, output_dir: str = '.') -> tuple[str, list[str] | str]:
+    """
+    Обрабатывает входной текст, определяя, является ли он полным
+    LaTeX документом или фрагментом, и рендерит его в изображение.
+    """
+    text = _fix_common_latex_errors(text)
+    text = html.unescape(text)
 
-        final_latex = build_latex_for_rendering(parsed_content)
+    # Проверяем, является ли текст полным LaTeX документом
+    if is_full_latex_document(text):
+        print("--- Обнаружен полный LaTeX документ ---")
         
-        output_prefix = f"render_{uuid4()}"
-        image_paths = render_latex_document(final_latex, output_prefix, output_dir)
-        return ('image', image_paths)
-
-    # Case 2: LaTeX fragments found (but not a full doc)
-    elif _contains_latex_fragments(input_text):
-        final_latex = convert_telegram_html_to_latex(input_text)
+        # Находим начало настоящего LaTeX документа и отрезаем все, что было до него.
+        # Это ключевое исправление.
+        doc_start_index = text.find(r'\documentclass')
+        latex_doc_text = text[doc_start_index:]
         
-        output_prefix = f"render_{uuid4()}"
-        image_paths = render_latex_document(final_latex, output_prefix, output_dir)
-        return ('image', image_paths)
-        
-    # Case 3: No LaTeX found
+        saved_files = process_full_latex_document(latex_doc_text, output_dir=output_dir)
+        return 'image', saved_files
     else:
-        return ('text', input_text)
+        # Если это не полный документ, считаем его одним большим фрагментом
+        # и рендерим как единое целое.
+        print("--- Обнаружен фрагмент LaTeX. Рендерим как единый документ. ---")
+        full_latex_code = convert_telegram_html_to_latex(text)
+        output_filename = f"render_{uuid.uuid4()}"
+        saved_files = render_latex_document(
+            full_latex_code,
+            output_filename,
+            output_dir=output_dir
+        )
+        return 'image', saved_files

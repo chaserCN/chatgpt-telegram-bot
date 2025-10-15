@@ -1,14 +1,36 @@
 import re
 from bs4 import BeautifulSoup, NavigableString
-from typing import TypedDict
+import uuid
 
-from .latex_constants import LATEX_PREAMBLE_TEMPLATE
+# Этот шаблон используется для создания полноценного LaTeX документа
+# из фрагментов, найденных в тексте.
+_LATEX_PREAMBLE_TEMPLATE_RAW = r"""
+\documentclass[12pt]{scrartcl}
+\usepackage[utf8]{inputenc}
+\usepackage[T2A]{fontenc}
+\usepackage{{amsmath}}
+\usepackage{{amssymb}}
+\usepackage{{graphicx}}
+\usepackage{{hyperref}}
+\usepackage{{tikz}}
+\usetikzlibrary{{angles,quotes}}
+\usepackage{{caption}}
+\usepackage{{titlesec}}
+\usepackage[shorthands=off,{lang}]{{babel}} 
+\usepackage{{microtype}} % Improves typography and spacing
+\usepackage{{cancel}}
+\usepackage{{ulem}}
+\usepackage{{xcolor}}
+\usepackage{{mhchem}}
+\usepackage{{geometry}}
+\geometry{{a4paper, margin=1in}}
 
-# A more specific TypedDict for Telegram HTML parsing results
-class TelegramParsedLatex(TypedDict):
-    pass
+\pagenumbering{{gobble}}
+"""
+LATEX_PREAMBLE_TEMPLATE = _LATEX_PREAMBLE_TEMPLATE_RAW.replace('{{lang}}', '{lang}')
 
-# Словарь для замены спецсимволов LaTeX в обычном тексте
+
+# Словарь для экранирования специальных символов LaTeX
 LATEX_SPECIAL_CHARS = {
     '&': r'\&',
     '%': r'\%',
@@ -72,7 +94,7 @@ def _recursive_html_to_latex(tag) -> str:
     return content
 
 
-def convert_telegram_html_to_latex(html_text: str) -> str:
+def convert_telegram_html_to_latex(html_text: str, lang: str = 'russian') -> str:
     """
     Конвертирует HTML-разметку Telegram в полноценный LaTeX документ.
     Если входной текст уже является LaTeX-документом, возвращает его без изменений.
@@ -111,29 +133,22 @@ def convert_telegram_html_to_latex(html_text: str) -> str:
     soup = BeautifulSoup(f"<body>{sanitized_html}</body>", 'html.parser')
 
     # 6. Рекурсивно конвертируем дерево в LaTeX
-    latex_body = _recursive_html_to_latex(soup.body)
-    
-    # 6. Восстанавливаем LaTeX на место "ярлыков"
-    for i, part in enumerate(latex_parts):
-        latex_body = latex_body.replace(f"LATEX_TOKEN_{i}", part)
+    body_content = _recursive_html_to_latex(soup)
 
-    # 7. Оборачиваем каждую страницу (разделенную \n\n) в preview ДО восстановления <pre>
-    pages = latex_body.split('\n\n')
-    processed_pages = r'\end{preview}\newpage\begin{preview}'.join(pages)
-    full_body_with_previews = f"\\begin{{preview}}\n{processed_pages}\n\\end{{preview}}"
+    # Restore placeholders
+    for i, item in enumerate(latex_parts):
+        # Просто восстанавливаем LaTeX фрагменты без всяких оберток
+        body_content = body_content.replace(f'LATEX_TOKEN_{i}', item, 1)
 
-    # 8. Восстанавливаем <pre> блоки в уже готовую структуру страниц
-    for i, part in enumerate(pre_parts):
-        pre_soup = BeautifulSoup(part, 'html.parser')
-        pre_content = pre_soup.pre.get_text() if pre_soup.pre else ''
-        latex_pre_block = f"\\begin{{verbatim}}\n{pre_content.strip()}\n\\end{{verbatim}}"
-        full_body_with_previews = full_body_with_previews.replace(f"__PRE_BLOCK_{i}__", latex_pre_block)
+    for i, item in enumerate(pre_parts):
+        body_content = body_content.replace(f'__PRE_BLOCK_{i}__', f'\\begin{{verbatim}}\n{item}\n\\end{{verbatim}}', 1)
 
     # 9. Собираем финальный документ
     # Определяем язык (пока что статически, можно расширить)
     # Простой эвристический метод для определения языка
-    lang = 'ukrainian' if any(c in 'їієґ' for c in html_text) else 'russian'
+    # lang = 'ukrainian' if any(c in 'їієґ' for c in html_text) else 'russian' # This line is removed as per the new_code
     
-    latex_preamble = LATEX_PREAMBLE_TEMPLATE.format(lang=lang)
-
-    return latex_preamble + full_body_with_previews + r"\end{document}"
+    # Аккуратно форматируем только плейсхолдер {lang}
+    preamble = LATEX_PREAMBLE_TEMPLATE.format(lang=lang)
+    body = process_document_body(html_text) # Используем новую функцию
+    return f"{preamble}\\begin{{document}}\\Huge\n{body}\n\\end{{document}}"
