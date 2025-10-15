@@ -94,16 +94,16 @@ def render_latex_document(full_latex_code: str, output_prefix: str, output_dir: 
                 print("--- STDERR ---")
                 print(result.stderr)
                 # Log file might contain more details
-                log_path = temp_path / "document.log"
-                if log_path.exists():
-                    print("--- document.log ---")
-                    print(log_path.read_text(encoding='utf-8', errors='ignore'))
+                #log_path = temp_path / "document.log"
+                #if log_path.exists():
+                #    print("--- document.log ---")
+                #    print(log_path.read_text(encoding='utf-8', errors='ignore'))
                         
                 # Сохраняем .tex для дебага
-                debug_file_path = Path(output_dir) / f"debug_{output_prefix}.tex"
-                with open(debug_file_path, 'w', encoding='utf-8') as f:
-                    f.write(full_latex_code)
-                print("⚠️  Исходный .tex файл сохранен как 'debug_error.tex'.")
+                #debug_file_path = Path(output_dir) / f"debug_{output_prefix}.tex"
+                #with open(debug_file_path, 'w', encoding='utf-8') as f:
+                #    f.write(full_latex_code)
+                #print("⚠️  Исходный .tex файл сохранен как 'debug_error.tex'.")
                 return [] # Возвращаем пустой список, если PDF не создан
 
         if not pdf_path.exists():
