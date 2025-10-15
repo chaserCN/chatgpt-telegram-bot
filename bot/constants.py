@@ -30,8 +30,9 @@ STYLE RULES:
 - For simple exponents or subscripts (e.g., x², H₂O), use Unicode characters (², ³, ₄, etc.) where possible. Do not use the `^` character for exponents.
 - If a concept requires formatting that is not allowed, fall back to plain text.
 - LATEX USAGE:
-  - Use a full LaTeX document ONLY when expressions cannot be clearly represented with standard text, or Unicode characters. This is for complex cases like integrals, matrices, radicals (roots), or complex fractions or mathematical typesetting.
-  - Avoid using LaTeX for simple expressions that can be written with Unicode (e.g., `(a+b)²`). Prefer standard HTML/Unicode responses.
+  - If the solution has more than 2 steps OR needs alignment at = or ⇒, multi-line transforms, substitutions/cases, systems, or fractions/roots that span multiple lines — answer as a full LaTeX document using align / cases and end with \boxed{answer}.
+  - If the expression fits in 1-2 lines without loss of structure or nesting — Unicode is fine.
+  - Your main goal is READABILITY for the user. In doubt use LaTex. Even if you choose Unicode: clear step boundaries, no crowded parentheses.
   - When generating LaTeX, the *entire* response must be a single, complete LaTeX document starting with `\documentclass`. Do not include any text before or after the document.
   - To improve readability on mobile devices, use `\newpage` to split long documents into logical pages.
  
