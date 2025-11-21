@@ -548,36 +548,55 @@ class ChatGPTTelegramBot:
         user_name_for_api = self._get_user_name_for_api(user_id, update.message.from_user.name)
         
         # Check if message contains /image command (BEFORE message_text removes it)
-        # Check both original text and entities for bot commands
+        # Only process if /image is at the start or after group_trigger_keyword
         original_text = update.message.text or ""
-        has_image_command = False
         
         logging.info(f'[PROMPT] Checking for /image command. Original text: "{original_text}", entities: {update.message.entities}')
         
-        # Check if text starts with /image
-        if original_text.strip().lower().startswith('/image'):
-            has_image_command = True
-            logging.info(f'[PROMPT] Found /image at start of text')
-        # Also check entities for bot commands
-        elif update.message.entities:
-            for entity in update.message.entities:
-                if entity.type == MessageEntity.BOT_COMMAND:
-                    command_text = original_text[entity.offset:entity.offset + entity.length]
-                    logging.info(f'[PROMPT] Found bot command entity: "{command_text}"')
-                    if command_text.lower() == '/image':
-                        has_image_command = True
-                        logging.info(f'[PROMPT] Found /image command in entities')
-                        break
+        # Check if we should process /image command
+        should_process_image = False
         
-        if has_image_command:
+        # In group chats, only process if:
+        # 1. /image - at the start of message
+        # 2. group_trigger_keyword /image - trigger keyword at start, then /image
+        if is_group_chat(update):
+            text_lower = original_text.lower().strip()
+            
+            # Check if message starts with /image
+            if text_lower.startswith('/image'):
+                should_process_image = True
+                logging.info(f'[PROMPT] /image command at start of message')
+            
+            # Check if message starts with group_trigger_keyword before /image
+            if not should_process_image:
+                trigger_keyword = self.config.get('group_trigger_keyword', '').lower()
+                if trigger_keyword:
+                    # Check if message starts with trigger keyword followed by /image
+                    if text_lower.startswith(trigger_keyword):
+                        # Remove trigger keyword and check if /image follows immediately
+                        remaining = text_lower[len(trigger_keyword):].strip()
+                        if remaining.startswith('/image'):
+                            should_process_image = True
+                            logging.info(f'[PROMPT] /image command with GROUP_TRIGGER_KEYWORD')
+        else:
+            # In private chats, check if message starts with /image
+            if original_text.strip().lower().startswith('/image'):
+                should_process_image = True
+        
+        # Process /image command if found
+        if should_process_image:
             # Remove /image from text and call image handler
-            # Find position of /image command (could be after bot mention like @BotName /image ...)
             text_lower = original_text.lower()
             image_pos = text_lower.find('/image')
             
             if image_pos != -1:
                 # Extract everything after /image command
                 image_prompt = original_text[image_pos + 6:].strip()  # Remove '/image' (6 chars) and trim
+                # Remove @botname if present after /image
+                if image_prompt.startswith('@'):
+                    space_pos = image_prompt.find(' ')
+                    if space_pos != -1:
+                        image_prompt = image_prompt[space_pos:].strip()
             else:
                 # Fallback: remove /image if found anywhere
                 image_prompt = original_text.replace('/image', '').strip()
