@@ -454,42 +454,85 @@ class GoogleAIHelper:
     async def generate_image(self, prompt: str) -> tuple[str, str]:
         bot_language = self.config['bot_language']
         try:
-            # Log image generation request
-            logging.info(f'[IMAGE] Image generation request: prompt="{prompt}", model=imagen-4.0-generate-001')
+            image_model = self.config.get('image_model', 'imagen-4.0-generate-001')
+            logging.info(f'[IMAGE] Image generation request: prompt="{prompt}", model={image_model}')
             
-            response = await self.client.aio.models.generate_images(
-                model=self.config.get('image_model', 'imagen-4.0-generate-001'),
-                prompt=prompt,
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
+            # Check if using Gemini image model (starts with "gemini") or Imagen model
+            if image_model.startswith('gemini'):
+                # Use generate_content with response_modalities for Gemini image models
+                logging.info(f'[IMAGE] Using Gemini image model: {image_model}')
+                response = await self.client.aio.models.generate_content(
+                    model=image_model,
+                    contents=[prompt],
+                    config=types.GenerateContentConfig(
+                        response_modalities=["TEXT", "IMAGE"]
+                    )
                 )
-            )
-
-            if not response.generated_images or len(response.generated_images) == 0:
-                logging.error(f'[IMAGE] No images generated: {str(response)}')
-                raise Exception(
-                    f"⚠️ _{localized_text('error', bot_language)}._ "
-                    f"⚠️\n{localized_text('try_again', bot_language)}."
-                )
-
-            # Get the first generated image
-            generated_image = response.generated_images[0]
-            
-            if generated_image.image.image_bytes is not None:
-                image_data = generated_image.image.image_bytes
-                image_data = base64.b64decode(image_data)
-                temp_filename = random_file_name('uploads', 'png')
                 
+                # Extract image from response
+                if not response.candidates or not response.candidates[0].content.parts:
+                    logging.error(f'[IMAGE] No response from Gemini: {str(response)}')
+                    raise Exception(
+                        f"⚠️ _{localized_text('error', bot_language)}._ "
+                        f"⚠️\n{localized_text('try_again', bot_language)}."
+                    )
+                
+                # Find image in parts
+                image_bytes = None
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data is not None:
+                        image_bytes = part.inline_data.data
+                        break
+                
+                if image_bytes is None:
+                    logging.error(f'[IMAGE] No image in response: {str(response)}')
+                    raise Exception(
+                        f"⚠️ _{localized_text('error', bot_language)}._ "
+                        f"⚠️\n{localized_text('try_again', bot_language)}."
+                    )
+                
+                # Save image
+                temp_filename = random_file_name('uploads/images', 'png')
                 with open(temp_filename, 'wb') as f:
-                    f.write(image_data)
+                    f.write(image_bytes)
                 
                 return temp_filename, "1024x1024"
-                    
-            elif generated_image.image.gcs_uri is not None:
-                return generated_image.image.gcs_uri, "1024x1024"
-                
             else:
-                raise Exception("No image data received from Google AI")
+                # Use generate_images for Imagen models
+                logging.info(f'[IMAGE] Using Imagen model: {image_model}')
+                response = await self.client.aio.models.generate_images(
+                    model=image_model,
+                    prompt=prompt,
+                    config=types.GenerateImagesConfig(
+                        number_of_images=1,
+                    )
+                )
+
+                if not response.generated_images or len(response.generated_images) == 0:
+                    logging.error(f'[IMAGE] No images generated: {str(response)}')
+                    raise Exception(
+                        f"⚠️ _{localized_text('error', bot_language)}._ "
+                        f"⚠️\n{localized_text('try_again', bot_language)}."
+                    )
+
+                # Get the first generated image
+                generated_image = response.generated_images[0]
+                
+                if generated_image.image.image_bytes is not None:
+                    image_data = generated_image.image.image_bytes
+                    image_data = base64.b64decode(image_data)
+                    temp_filename = random_file_name('uploads/images', 'png')
+                    
+                    with open(temp_filename, 'wb') as f:
+                        f.write(image_data)
+                    
+                    return temp_filename, "1024x1024"
+                        
+                elif generated_image.image.gcs_uri is not None:
+                    return generated_image.image.gcs_uri, "1024x1024"
+                    
+                else:
+                    raise Exception("No image data received from Google AI")
             
         except Exception as e:
             logging.error(f'[IMAGE] Image generation error: {str(e)}')

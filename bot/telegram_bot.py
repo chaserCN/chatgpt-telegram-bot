@@ -8,7 +8,7 @@ import io
 from uuid import uuid4
 from telegram import BotCommandScopeAllGroupChats, Update, constants
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultArticle
-from telegram import InputTextMessageContent, BotCommand
+from telegram import InputTextMessageContent, BotCommand, MessageEntity
 from telegram.error import RetryAfter, TimedOut, BadRequest
 from telegram.request import HTTPXRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, \
@@ -100,15 +100,16 @@ class ChatGPTTelegramBot:
             text=localized_text('reset_done', self.config['bot_language'])
         )
 
-    async def image(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def image(self, update: Update, context: ContextTypes.DEFAULT_TYPE, prompt_override: str | None = None):
         """
         Generates an image for the given prompt using DALL·E APIs
+        :param prompt_override: Optional prompt to use instead of extracting from message
         """
         if not self.config['enable_image_generation'] \
                 or not await self.check_allowed_and_within_budget(update, context):
             return
 
-        image_query = message_text(update.message)
+        image_query = prompt_override if prompt_override is not None else message_text(update.message)
         if image_query == '':
             await update.effective_message.reply_text(
                 message_thread_id=get_thread_id(update),
@@ -545,6 +546,46 @@ class ChatGPTTelegramBot:
         user_id = update.message.from_user.id
         # Look up user name from config, fallback to Telegram name if not found
         user_name_for_api = self._get_user_name_for_api(user_id, update.message.from_user.name)
+        
+        # Check if message contains /image command (BEFORE message_text removes it)
+        # Check both original text and entities for bot commands
+        original_text = update.message.text or ""
+        has_image_command = False
+        
+        logging.info(f'[PROMPT] Checking for /image command. Original text: "{original_text}", entities: {update.message.entities}')
+        
+        # Check if text starts with /image
+        if original_text.strip().lower().startswith('/image'):
+            has_image_command = True
+            logging.info(f'[PROMPT] Found /image at start of text')
+        # Also check entities for bot commands
+        elif update.message.entities:
+            for entity in update.message.entities:
+                if entity.type == MessageEntity.BOT_COMMAND:
+                    command_text = original_text[entity.offset:entity.offset + entity.length]
+                    logging.info(f'[PROMPT] Found bot command entity: "{command_text}"')
+                    if command_text.lower() == '/image':
+                        has_image_command = True
+                        logging.info(f'[PROMPT] Found /image command in entities')
+                        break
+        
+        if has_image_command:
+            # Remove /image from text and call image handler
+            # Find position of /image command (could be after bot mention like @BotName /image ...)
+            text_lower = original_text.lower()
+            image_pos = text_lower.find('/image')
+            
+            if image_pos != -1:
+                # Extract everything after /image command
+                image_prompt = original_text[image_pos + 6:].strip()  # Remove '/image' (6 chars) and trim
+            else:
+                # Fallback: remove /image if found anywhere
+                image_prompt = original_text.replace('/image', '').strip()
+            
+            logging.info(f'[PROMPT] Detected /image command in text, redirecting to image handler. Original: "{original_text}", Prompt: "{image_prompt}"')
+            # Call image handler with prompt override (since update.message.text is read-only)
+            return await self.image(update, context, prompt_override=image_prompt)
+        
         prompt = message_text(update.message)
         self.last_message[chat_id] = prompt
 
