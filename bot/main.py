@@ -90,7 +90,7 @@ def main():
     if ai_provider == 'openai':
         model = os.environ.get('OPENAI_MODEL', 'gpt-4o')
     elif ai_provider == 'google':
-        model = os.environ.get('GOOGLE_MODEL', 'gemini-pro')
+        model = os.environ.get('GOOGLE_MODEL', 'gemini-3-pro-preview')
     else:  # claude
         model = os.environ.get('CLAUDE_MODEL', 'claude-sonnet-4-20250514')
 
@@ -131,6 +131,7 @@ def main():
             **common_config,
             'api_key': os.environ['GEMINI_API_KEY'],
             'whisper_prompt': os.environ.get('WHISPER_PROMPT', ''),
+            'image_model': os.environ.get('IMAGE_MODEL', 'gemini-3-pro-image-preview'),
         }
     else:  # claude
         ai_config = {

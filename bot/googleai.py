@@ -107,7 +107,7 @@ class GoogleAIHelper:
         
         return await self.__process_nonstreaming_response(response, chat_id)
 
-    async def get_chat_response_stream(self, chat_id: int, query: str, user_name: str | None) -> tuple[str, bool]:
+    async def get_chat_response_stream(self, chat_id: int, query: str, user_name: str | None) -> tuple[str | Dict, bool]:
         logging.info(f'[STREAM] Starting get_chat_response_stream: chat_id={chat_id}, query="{query[:50]}..."')
 
         response = await self.__send_query(chat_id, query, user_name, stream=True)
@@ -172,10 +172,16 @@ class GoogleAIHelper:
         )
         return [grounding_tool]
 
-    async def __process_nonstreaming_response(self, response, chat_id: int) -> str:
+    async def __process_nonstreaming_response(self, response, chat_id: int) -> str | Dict:
         #print_object("[NON-STREAM] Response:", response)
         
         answer, has_grounding, _ = self.__process_nonfunction_response(response, check_grounding=True)
+        
+        # Check if answer is a direct_result (e.g., image)
+        if is_direct_result(answer):
+            logging.info(f'[NON-STREAM] Direct result detected (image)')
+            return answer
+        
         answer = answer or ""
         
         logging.info(f'[NON-STREAM] Processed response: answer_length={len(answer)}, has_grounding={has_grounding}')
@@ -196,7 +202,7 @@ class GoogleAIHelper:
 
         return answer
 
-    async def __process_streaming_response(self, response, chat_id: int) -> tuple[str, bool]:
+    async def __process_streaming_response(self, response, chat_id: int) -> tuple[str | Dict, bool]:
         """
         Process streaming response and yield chunks with final status
         :param response: The streaming response from Google AI
@@ -206,11 +212,20 @@ class GoogleAIHelper:
         answer = ''
         has_grounding = False
         chunk_count = 0
+        direct_result_image = None
 
         async for chunk in response:
             chunk_count += 1
             #print_object("Streaming chunk:", chunk)
             chunk_text, found_grounding, is_final = self.__process_nonfunction_response(chunk, check_grounding=not has_grounding)
+
+            # Check if chunk contains a direct_result (image)
+            if is_direct_result(chunk_text):
+                logging.info(f'[STREAM] Direct result (image) found in chunk {chunk_count}')
+                direct_result_image = chunk_text
+                # Yield the image immediately
+                yield direct_result_image, True
+                return
 
             if found_grounding and not has_grounding:
                 logging.info(f'[STREAM] Grounding found in chunk {chunk_count}, adding prefix')
@@ -219,7 +234,7 @@ class GoogleAIHelper:
 
             has_grounding |= found_grounding
 
-            if chunk_text is not None:
+            if chunk_text is not None and isinstance(chunk_text, str):
                 answer += chunk_text
                 logging.info(f'[STREAM] Chunk {chunk_count}: text_length={len(chunk_text)}, is_final={is_final}, total_length={len(answer)}')
 
@@ -241,14 +256,58 @@ class GoogleAIHelper:
         
         yield answer, True
 
-    def __process_nonfunction_response(self, response, check_grounding: bool) -> tuple[str | None, bool, bool]:
+    def __process_nonfunction_response(self, response, check_grounding: bool) -> tuple[str | None | Dict, bool, bool]:
         answer = response.text
         
         has_grounding = False
         is_final = False
         
+        # Check for images in response (Gemini can return images in parts)
         if hasattr(response, 'candidates') and response.candidates:
             candidate = response.candidates[0]
+            
+            # Check if response contains images
+            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                for part in candidate.content.parts:
+                    # Check for inline image data
+                    if hasattr(part, 'inline_data') and part.inline_data is not None:
+                        logging.info(f'[IMAGE] Found image in response, processing...')
+                        try:
+                            # Get image data (Gemini returns raw bytes, not base64)
+                            image_bytes = part.inline_data.data
+                            mime_type = part.inline_data.mime_type if hasattr(part.inline_data, 'mime_type') else 'image/png'
+                            
+                            # Determine file extension from mime type
+                            ext = 'png'
+                            if 'jpeg' in mime_type or 'jpg' in mime_type:
+                                ext = 'jpg'
+                            elif 'webp' in mime_type:
+                                ext = 'webp'
+                            
+                            # Save image to temporary file (write raw bytes directly)
+                            filepath = random_file_name(directory_name="uploads/images", extension=ext)
+                            
+                            with open(filepath, "wb") as f:
+                                f.write(image_bytes)
+                            
+                            logging.info(f'[IMAGE] Saved generated image to {filepath}')
+                            
+                            # Return direct_result for image
+                            direct_result = {
+                                'direct_result': {
+                                    'kind': 'photo',
+                                    'format': 'path',
+                                    'value': filepath
+                                }
+                            }
+                            
+                            # If there's also text, we'll return the image as direct_result
+                            # and the text will be handled separately if needed
+                            return direct_result, has_grounding, True
+                            
+                        except Exception as e:
+                            logging.error(f'[IMAGE] Error processing image from response: {str(e)}')
+                            # Continue with text processing if image processing fails
             
             if check_grounding:
                 has_grounding = (hasattr(candidate, 'grounding_metadata') and 
@@ -272,19 +331,19 @@ class GoogleAIHelper:
     # Vision
     #########################################################
 
-    async def interpret_image(self, chat_id: int, fileobj, user_name: str | None, prompt=None) -> str | Dict:
+    async def interpret_image(self, chat_id: int, fileobj, user_name: str | None, prompt=None, use_image_model=False) -> str | Dict:
         # Log vision request
-        logging.info(f'[VISION] Vision request: prompt="{prompt}", user_name={user_name}')
+        logging.info(f'[VISION] Vision request: prompt="{prompt}", user_name={user_name}, use_image_model={use_image_model}')
         
-        response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt)
+        response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=False, use_image_model=use_image_model)
 
         return await self.__process_nonstreaming_response(response, chat_id)
 
-    async def interpret_image_stream(self, chat_id: int, fileobj, user_name: str | None, prompt=None) -> tuple[str, bool, bool]:
+    async def interpret_image_stream(self, chat_id: int, fileobj, user_name: str | None, prompt=None, use_image_model=False) -> tuple[str | Dict, bool, bool]:
         # Log streaming vision request
-        logging.info(f'[VISION] Starting interpret_image_stream: prompt="{prompt}", user_name={user_name}')
+        logging.info(f'[VISION] Starting interpret_image_stream: prompt="{prompt}", user_name={user_name}, use_image_model={use_image_model}')
         
-        response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=True)
+        response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=True, use_image_model=use_image_model)
         
         async for answer, is_final in self.__process_streaming_response(response, chat_id):
             yield answer, is_final, is_final
@@ -295,10 +354,18 @@ class GoogleAIHelper:
         wait=wait_fixed(20),
         stop=stop_after_attempt(3)
     )
-    async def __send_vision_query(self, chat_id: int, fileobj, user_name: str | None, prompt=None, stream=False):
+    async def __send_vision_query(self, chat_id: int, fileobj, user_name: str | None, prompt=None, stream=False, use_image_model=False):
         bot_language = self.config['bot_language']
         try:
-            logging.info(f'[VISION] Vision API request: model={self.config["model"]}, prompt="{prompt}", stream={stream}')
+            # Choose model based on use_image_model flag
+            if use_image_model:
+                model = self.config.get('image_model', 'gemini-3-pro-image-preview')
+                logging.info(f'[VISION] Using image model for editing: {model}')
+            else:
+                model = self.config['model']
+                logging.info(f'[VISION] Using regular model for recognition: {model}')
+            
+            logging.info(f'[VISION] Vision API request: model={model}, prompt="{prompt}", stream={stream}, use_image_model={use_image_model}')
 
             # Set default prompt if none provided and no history
             if not prompt or not prompt.strip():
@@ -336,20 +403,32 @@ class GoogleAIHelper:
                 instructions += self.config['assistant_prompt']
                 logging.info(f'[VISION] Added assistant prompt: {self.config["assistant_prompt"]}')
 
-            config = types.GenerateContentConfig(system_instruction=instructions)
-            logging.info(f'[VISION] Config created successfully')
+            # Configure response modalities based on use_image_model
+            if use_image_model:
+                # Enable both TEXT and IMAGE response modalities for image editing
+                config = types.GenerateContentConfig(
+                    system_instruction=instructions,
+                    response_modalities=["TEXT", "IMAGE"]
+                )
+                logging.info(f'[VISION] Config created with response_modalities=["TEXT", "IMAGE"] for image editing')
+            else:
+                # Only TEXT for recognition
+                config = types.GenerateContentConfig(
+                    system_instruction=instructions
+                )
+                logging.info(f'[VISION] Config created with TEXT only for recognition')
 
 
             # Send vision request with history
             if stream:
                 response = await self.client.aio.models.generate_content_stream(
-                    model=self.config['model'],
+                    model=model,
                     contents=contents,
                     config=config
                 )
             else:
                 response = await self.client.aio.models.generate_content(
-                    model=self.config['model'],
+                    model=model,
                     contents=contents,
                     config=config
                 )
@@ -546,4 +625,3 @@ class GoogleAIHelper:
         except Exception as e:
             logging.error(f'[TRANSCRIBE] Transcription error: {str(e)}')
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
-

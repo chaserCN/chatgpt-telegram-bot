@@ -338,6 +338,7 @@ class ChatGPTTelegramBot:
         image = update.message.effective_attachment[-1]
 
         async def _execute():
+            nonlocal prompt  # Allow modifying the outer prompt variable
             bot_language = self.config['bot_language']
             try:
                 media_file = await context.bot.get_file(image.file_id)
@@ -380,10 +381,18 @@ class ChatGPTTelegramBot:
             user_id = update.message.from_user.id
             user_name = self._get_user_name_for_api(user_id=user_id, telegram_user_name=update.message.from_user.name)
             
+            # Check if prompt starts with /image to use image editing model
+            use_image_model = False
+            if prompt and isinstance(prompt, str) and prompt.strip().lower().startswith('/image'):
+                use_image_model = True
+                # Remove /image from prompt, keep the rest
+                prompt = prompt.strip()[6:].strip()  # Remove '/image' (6 chars) and trim
+                logging.info(f'[VISION] Detected /image command, using image model for editing. Remaining prompt: "{prompt}"')
+            
             if self.config['stream']:
 
                 stream_response = self.openai.interpret_image_stream(
-                    chat_id=chat_id, fileobj=temp_file_png, user_name=user_name, prompt=prompt
+                    chat_id=chat_id, fileobj=temp_file_png, user_name=user_name, prompt=prompt, use_image_model=use_image_model
                 )
                 i = 0
                 prev = ''
@@ -463,7 +472,7 @@ class ChatGPTTelegramBot:
 
                 try:
                     interpretation = await self.openai.interpret_image(
-                        chat_id, temp_file_png, self.config.get('user_names_dict', {}).get(str(user_id), update.message.from_user.name), prompt=prompt
+                        chat_id, temp_file_png, self.config.get('user_names_dict', {}).get(str(user_id), update.message.from_user.name), prompt=prompt, use_image_model=use_image_model
                     )
 
                     if is_direct_result(interpretation):
