@@ -388,8 +388,13 @@ class GoogleAIHelper:
                 parts.append(types.Part(text=prompt))
             
             # Create contents
-            if chat_id in self.conversations and self.conversations[chat_id]:
-                # Include conversation history
+            # For image models, don't use conversation history to avoid thought_signature issues
+            if use_image_model:
+                # Image editing doesn't need conversation history
+                contents = [types.Content(role="user", parts=parts)]
+                logging.info(f'[VISION] Using image model, skipping conversation history')
+            elif chat_id in self.conversations and self.conversations[chat_id]:
+                # Include conversation history for regular vision
                 contents = self.conversations[chat_id].copy()
                 contents.append(types.Content(role="user", parts=parts))
             else:
