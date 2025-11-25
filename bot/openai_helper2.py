@@ -352,7 +352,8 @@ class OpenAIHelper2:
     # Vision
     #########################################################
 
-    async def interpret_image(self, chat_id: int, fileobj, user_name: str | None, prompt=None) -> str | Dict:
+    async def interpret_image(self, chat_id: int, fileobj, user_name: str | None, prompt=None, use_image_model=False) -> str | Dict:
+        # use_image_model is not used for OpenAI (no separate image editing model)
         response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt)
 
         answer = self.__extract_text_from_response(response)
@@ -360,7 +361,8 @@ class OpenAIHelper2:
 
         return answer
 
-    async def interpret_image_stream(self, chat_id: int, fileobj, user_name: str | None, prompt=None) -> tuple[str, bool, bool]:
+    async def interpret_image_stream(self, chat_id: int, fileobj, user_name: str | None, prompt=None, use_image_model=False) -> tuple[str, bool, bool]:
+        # use_image_model is not used for OpenAI (no separate image editing model)
         response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=True)
 
         answer = ''
