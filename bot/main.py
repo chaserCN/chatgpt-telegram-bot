@@ -124,6 +124,13 @@ def main():
             'vision_detail': os.environ.get('VISION_DETAIL', 'auto'),
             'tts_model': os.environ.get('TTS_MODEL', 'tts-1'),
             'tts_voice': os.environ.get('TTS_VOICE', 'alloy'),
+            'tts_speed': float(os.environ.get('TTS_SPEED', '0.7')),
+            'tts_instructions': os.environ.get(
+                'TTS_INSTRUCTIONS',
+                'Speak in French. Speak slowly with very clear articulation and careful pronunciation. '
+                'Pause slightly between phrases. The listener does not know French and needs to repeat the '
+                'phrase clearly while in France.'
+            ),
             'enable_web_search': os.environ.get('ENABLE_WEB_SEARCH', 'true').lower() == 'true',
         }
     elif ai_provider == 'google':

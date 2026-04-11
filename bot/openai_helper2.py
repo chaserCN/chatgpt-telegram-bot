@@ -488,12 +488,22 @@ class OpenAIHelper2:
         """
         bot_language = self.config['bot_language']
         try:
-            response = await self.client.audio.speech.create(
-                model=self.config['tts_model'],
-                voice=self.config['tts_voice'],
-                input=text,
-                response_format='opus'
-            )
+            speech_params = {
+                'model': self.config['tts_model'],
+                'voice': self.config['tts_voice'],
+                'input': text,
+                'response_format': 'opus',
+            }
+
+            tts_instructions = self.config.get('tts_instructions', '').strip()
+            if tts_instructions:
+                speech_params['instructions'] = tts_instructions
+
+            tts_speed = self.config.get('tts_speed')
+            if tts_speed is not None:
+                speech_params['speed'] = tts_speed
+
+            response = await self.client.audio.speech.create(**speech_params)
 
             temp_file = io.BytesIO()
             temp_file.write(response.read())

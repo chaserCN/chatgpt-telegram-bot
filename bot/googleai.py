@@ -575,10 +575,9 @@ class GoogleAIHelper:
                     f"⚠️\n{localized_text('try_again', bot_language)}."
                 )
 
-            # Get audio data and decode base64
+            # The Python Google GenAI SDK returns raw PCM bytes here.
+            # Base64 decoding corrupts the payload and produces near-empty audio.
             audio_data = response.candidates[0].content.parts[0].inline_data.data
-            import base64
-            audio_data = base64.b64decode(audio_data)
             
             # Convert PCM to Opus for Telegram compatibility
             # Create temporary WAV file
