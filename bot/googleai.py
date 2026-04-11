@@ -552,10 +552,17 @@ class GoogleAIHelper:
         try:
             # Log TTS generation request
             logging.info(f'[TTS] TTS generation request: text="{text[:50]}...", model=gemini-2.5-flash-preview-tts')
+            tts_prompt = self.config.get(
+                'tts_prompt',
+                'Speak in French, slowly, with very clear articulation for a beginner traveler'
+            ).strip()
+            contents = text
+            if tts_prompt:
+                contents = f'{tts_prompt}: {text}'
             
             response = await self.client.aio.models.generate_content(
                 model=self.config.get('tts_model', 'gemini-2.5-flash-preview-tts'),
-                contents=text,
+                contents=contents,
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(

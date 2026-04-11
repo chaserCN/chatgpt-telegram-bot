@@ -122,14 +122,13 @@ def main():
             'frequency_penalty': float(os.environ.get('FREQUENCY_PENALTY', 0.0)),
             'whisper_prompt': os.environ.get('WHISPER_PROMPT', ''),
             'vision_detail': os.environ.get('VISION_DETAIL', 'auto'),
-            'tts_model': os.environ.get('TTS_MODEL', 'tts-1'),
+            'tts_model': os.environ.get('TTS_MODEL', 'gpt-4o-mini-tts'),
             'tts_voice': os.environ.get('TTS_VOICE', 'alloy'),
-            'tts_speed': float(os.environ.get('TTS_SPEED', '0.7')),
             'tts_instructions': os.environ.get(
                 'TTS_INSTRUCTIONS',
-                'Speak in French. Speak slowly with very clear articulation and careful pronunciation. '
-                'Pause slightly between phrases. The listener does not know French and needs to repeat the '
-                'phrase clearly while in France.'
+                'Speak in French with clear, precise articulation for a non-French speaker. '
+                'Keep a natural pace, slightly slower than normal. '
+                'Pronounce each word carefully and cleanly, with short pauses between phrases.'
             ),
             'enable_web_search': os.environ.get('ENABLE_WEB_SEARCH', 'true').lower() == 'true',
         }
@@ -139,6 +138,10 @@ def main():
             'api_key': os.environ['GEMINI_API_KEY'],
             'whisper_prompt': os.environ.get('WHISPER_PROMPT', ''),
             'image_model': os.environ.get('IMAGE_MODEL', 'gemini-3-pro-image-preview'),
+            'tts_prompt': os.environ.get(
+                'GEMINI_TTS_PROMPT',
+                'Speak in French, slowly, with very clear articulation for a beginner traveler.'
+            ),
         }
     else:  # claude
         ai_config = {
