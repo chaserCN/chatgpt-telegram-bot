@@ -575,9 +575,32 @@ class GoogleAIHelper:
                     f"⚠️\n{localized_text('try_again', bot_language)}."
                 )
 
-            # The Python Google GenAI SDK returns raw PCM bytes here.
-            # Base64 decoding corrupts the payload and produces near-empty audio.
-            audio_data = response.candidates[0].content.parts[0].inline_data.data
+            candidate = response.candidates[0]
+            candidate_content = getattr(candidate, 'content', None)
+            candidate_parts = getattr(candidate_content, 'parts', None) if candidate_content else None
+            if not candidate_parts:
+                finish_reason = getattr(candidate, 'finish_reason', 'unknown')
+                logging.error(
+                    f'[TTS] Gemini returned no audio parts: finish_reason={finish_reason}, candidate={candidate}'
+                )
+                raise Exception(
+                    'Google AI TTS returned no audio data. '
+                    'Try a shorter phrase or another voice/model.'
+                )
+
+            audio_data = None
+            for part in candidate_parts:
+                inline_data = getattr(part, 'inline_data', None)
+                if inline_data is not None and getattr(inline_data, 'data', None):
+                    audio_data = inline_data.data
+                    break
+
+            if not audio_data:
+                logging.error(f'[TTS] Gemini candidate parts contained no inline audio data: {candidate_parts}')
+                raise Exception(
+                    'Google AI TTS returned an empty audio payload. '
+                    'Try a shorter phrase or another voice/model.'
+                )
             
             # Convert PCM to Opus for Telegram compatibility
             # Create temporary WAV file
