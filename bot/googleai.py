@@ -7,7 +7,6 @@ import wave
 import subprocess
 import tempfile
 import os
-from enum import Enum
 from typing import Dict
 
 from google import genai
@@ -15,82 +14,28 @@ from google.genai import types
 import io
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
 
 from plugin_manager import PluginManager
-from utils import is_direct_result, direct_result_kind, localized_text, print_object, random_file_name
+from utils import localized_text, random_file_name
 from constants import MULTIUSER_CHAT_INSTRUCTIONS
 
 console = Console()
-
-class Role(Enum):
-    USER = "user"
-    MODEL = "model"
 
 class GoogleAIHelper:
     def __init__(self, config: dict, plugin_manager: PluginManager):
         self.client = genai.Client(api_key=config['api_key'])
         self.config = config
         self.plugin_manager = plugin_manager
-        self.conversations: dict[int: list] = {}  # {chat_id: conversation_history}
+        self.previous_interactions: dict[int: str] = {}  # {chat_id: interaction_id}
         self.last_updated: dict[int: datetime] = {}  # {chat_id: last_update_timestamp} 
 
     def reset_chat_history(self, chat_id: int, content=''):
-        """Reset the conversation history for a specific chat"""
-        self.conversations[chat_id] = []
-
-    def __add_to_history(self, chat_id: int, role: Role, content: str):
-        """Add a message to the conversation history"""
-
-        user_content = types.Content(
-            role=role.value, parts=[types.Part(text=content)]
-        )
-        if chat_id not in self.conversations or not self.conversations[chat_id]:
-            self.conversations[chat_id] = []
-
-        self.conversations[chat_id].append(user_content)
-
-    def __print_history_colored(self, chat_id: int):
-        """Print conversation history with colors"""
-        if chat_id not in self.conversations:
-            console.print("[red]No conversation history found[/red]")
-            return
-            
-        history = self.conversations[chat_id]
-        if not history:
-            console.print("[yellow]Empty conversation history[/yellow]")
-            return
-            
-        console.print(f"\n[bold cyan]Conversation History (chat_id: {chat_id}):[/bold cyan]")
-        
-        for i, msg in enumerate(history):
-            role = msg.role
-            content = msg.parts[0].text if msg.parts else "No content"
-            
-            # Color coding based on role
-            if role == "user":
-                role_color = "[bold green]"
-                content_color = "[green]"
-            elif role == "model":
-                role_color = "[bold blue]"
-                content_color = "[blue]"
-            else:
-                role_color = "[bold white]"
-                content_color = "[white]"
-                
-            # Truncate content for display
-            display_content = content[:100] + "..." if len(content) > 100 else content
-            
-            panel = Panel(
-                Text(display_content, style=content_color),
-                title=f"{role_color}{role.upper()}[/{role_color[1:]} (#{i+1})",
-                border_style="dim"
-            )
-            console.print(panel)
+        """Reset the interaction history for a specific chat"""
+        if chat_id in self.previous_interactions:
+            del self.previous_interactions[chat_id]
 
     def __max_age_reached(self, chat_id: int) -> bool:
-        """Check if the maximum conversation age has been reached"""
+        """Check if the maximum interaction age has been reached"""
         if chat_id not in self.last_updated:
             return True
         age = datetime.datetime.now() - self.last_updated[chat_id]
@@ -124,7 +69,7 @@ class GoogleAIHelper:
     async def __send_query(self, chat_id: int, query: str, user_name: str | None, stream=False):
         bot_language = self.config['bot_language']
         try:
-            if chat_id not in self.conversations or self.__max_age_reached(chat_id):
+            if self.__max_age_reached(chat_id):
                 self.reset_chat_history(chat_id)
 
             self.last_updated[chat_id] = datetime.datetime.now()
@@ -132,32 +77,30 @@ class GoogleAIHelper:
             if user_name:
                 query = f"{user_name}: {query}"
 
-            self.__add_to_history(chat_id, role=Role.USER, content=query)
-
             instructions = MULTIUSER_CHAT_INSTRUCTIONS
             if 'assistant_prompt' in self.config and self.config['assistant_prompt']:
                 instructions += self.config['assistant_prompt']
 
             tools = self.__tools_for_request()
-            
-            config = types.GenerateContentConfig(system_instruction=instructions, tools=tools)
+            has_previous_interaction = chat_id in self.previous_interactions
 
-            console.print(f"[bold yellow]🚀 [SEND] API request:[/bold yellow] [cyan]model={self.config['model']}, stream={stream}, history_length={len(self.conversations[chat_id])}[/cyan]")
-            logging.info(f'[SEND] API request: model={self.config["model"]}, stream={stream}, history_length={len(self.conversations[chat_id])}')
-            #self.__print_history_colored(chat_id)
+            console.print(
+                f"[bold yellow]🚀 [SEND] API request:[/bold yellow] "
+                f"[cyan]model={self.config['model']}, stream={stream}, has_previous_interaction={has_previous_interaction}[/cyan]"
+            )
+            logging.info(
+                f'[SEND] API request: model={self.config["model"]}, stream={stream}, '
+                f'has_previous_interaction={has_previous_interaction}'
+            )
+            interaction_args = self.__interaction_request_args(
+                chat_id=chat_id,
+                input_payload=query,
+                system_instruction=instructions,
+                tools=tools,
+                stream=stream,
+            )
 
-            if stream:
-                response = await self.client.aio.models.generate_content_stream(
-                    model=self.config['model'],
-                    contents=self.conversations[chat_id],
-                    config=config
-                )
-            else:
-                response = await self.client.aio.models.generate_content(
-                    model=self.config['model'],
-                    contents=self.conversations[chat_id],
-                    config=config
-                )
+            response = await self.client.aio.interactions.create(**interaction_args)
 
             logging.info(f'[SEND] Response received: type={type(response).__name__}')
             return response
@@ -166,22 +109,15 @@ class GoogleAIHelper:
             logging.error(f'[SEND] General error: {str(e)}')
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
-    def __tools_for_request(self) -> list[types.Tool]:
-        grounding_tool = types.Tool(
-            google_search=types.GoogleSearch()
-        )
-        return [grounding_tool]
+    def __tools_for_request(self) -> list[dict]:
+        return [
+            {"type": "google_search"},
+            {"type": "url_context"},
+            {"type": "code_execution"},
+        ]
 
     async def __process_nonstreaming_response(self, response, chat_id: int) -> str | Dict:
-        #print_object("[NON-STREAM] Response:", response)
-        
-        answer, has_grounding, _ = self.__process_nonfunction_response(response, check_grounding=True)
-        
-        # Check if answer is a direct_result (e.g., image)
-        if is_direct_result(answer):
-            logging.info(f'[NON-STREAM] Direct result detected (image)')
-            return answer
-        
+        answer, has_grounding = self.__extract_interaction_output(response)
         answer = answer or ""
         
         logging.info(f'[NON-STREAM] Processed response: answer_length={len(answer)}, has_grounding={has_grounding}')
@@ -195,8 +131,7 @@ class GoogleAIHelper:
             grounding_prefix = localized_text('web_search_result', self.config['bot_language'])
             answer = f"<i>{grounding_prefix}</i>\n\n{answer}"
         
-        # Add to history
-        self.__add_to_history(chat_id, role=Role.MODEL, content=answer)
+        self.__store_interaction_id(chat_id, response)
         
         console.print(f"[bold green]✅ [NON-STREAM] Final result:[/bold green] [cyan]length={len(answer)}[/cyan]")
 
@@ -212,36 +147,22 @@ class GoogleAIHelper:
         answer = ''
         has_grounding = False
         chunk_count = 0
-        direct_result_image = None
 
         async for chunk in response:
             chunk_count += 1
-            #print_object("Streaming chunk:", chunk)
-            chunk_text, found_grounding, is_final = self.__process_nonfunction_response(chunk, check_grounding=not has_grounding)
+            event_type = getattr(chunk, 'event_type', '')
 
-            # Check if chunk contains a direct_result (image)
-            if is_direct_result(chunk_text):
-                logging.info(f'[STREAM] Direct result (image) found in chunk {chunk_count}')
-                direct_result_image = chunk_text
-                # Yield the image immediately
-                yield direct_result_image, True
-                return
-
-            if found_grounding and not has_grounding:
-                logging.info(f'[STREAM] Grounding found in chunk {chunk_count}, adding prefix')
-                grounding_prefix = localized_text('web_search_result', self.config['bot_language'])
-                answer = f"<i>{grounding_prefix}</i>\n\n{answer}"
-
-            has_grounding |= found_grounding
-
-            if chunk_text is not None and isinstance(chunk_text, str):
-                answer += chunk_text
-                logging.info(f'[STREAM] Chunk {chunk_count}: text_length={len(chunk_text)}, is_final={is_final}, total_length={len(answer)}')
-
-                if not is_final:
+            if event_type == 'content.delta':
+                delta = getattr(chunk, 'delta', None)
+                if getattr(delta, 'type', None) == 'text' and getattr(delta, 'text', None):
+                    answer += delta.text
+                    logging.info(f'[STREAM] Chunk {chunk_count}: text_length={len(delta.text)}, total_length={len(answer)}')
                     yield answer, False
-                else:
-                    logging.info(f'[STREAM] Final chunk {chunk_count} received')
+            elif event_type == 'interaction.complete':
+                final_interaction = getattr(chunk, 'interaction', None)
+                has_grounding = self.__interaction_used_grounding(final_interaction)
+                self.__store_interaction_id(chat_id, final_interaction)
+                logging.info(f'[STREAM] Final chunk {chunk_count} received')
 
         console.print(f"[bold blue]🔄 [STREAM] Streaming completed:[/bold blue] [cyan]chunks={chunk_count}, response_length={len(str(answer))}[/cyan]")
         logging.info(f'[STREAM] Streaming completed: chunks={chunk_count}, response_length={len(str(answer))}')
@@ -251,79 +172,17 @@ class GoogleAIHelper:
             logging.warning(f'[STREAM] Empty response detected')
             answer = localized_text('empty_response', self.config['bot_language'])
         
-        # Add to history for all responses
-        self.__add_to_history(chat_id, role=Role.MODEL, content=answer)
+        if has_grounding:
+            logging.info(f'[STREAM] Adding grounding prefix')
+            grounding_prefix = localized_text('web_search_result', self.config['bot_language'])
+            answer = f"<i>{grounding_prefix}</i>\n\n{answer}"
         
         yield answer, True
 
-    def __process_nonfunction_response(self, response, check_grounding: bool) -> tuple[str | None | Dict, bool, bool]:
-        answer = response.text
-        
-        has_grounding = False
-        is_final = False
-        
-        # Check for images in response (Gemini can return images in parts)
-        if hasattr(response, 'candidates') and response.candidates:
-            candidate = response.candidates[0]
-            
-            # Check if response contains images
-            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                for part in candidate.content.parts:
-                    # Check for inline image data
-                    if hasattr(part, 'inline_data') and part.inline_data is not None:
-                        logging.info(f'[IMAGE] Found image in response, processing...')
-                        try:
-                            # Get image data (Gemini returns raw bytes, not base64)
-                            image_bytes = part.inline_data.data
-                            mime_type = part.inline_data.mime_type if hasattr(part.inline_data, 'mime_type') else 'image/png'
-                            
-                            # Determine file extension from mime type
-                            ext = 'png'
-                            if 'jpeg' in mime_type or 'jpg' in mime_type:
-                                ext = 'jpg'
-                            elif 'webp' in mime_type:
-                                ext = 'webp'
-                            
-                            # Save image to temporary file (write raw bytes directly)
-                            filepath = random_file_name(directory_name="uploads/images", extension=ext)
-                            
-                            with open(filepath, "wb") as f:
-                                f.write(image_bytes)
-                            
-                            logging.info(f'[IMAGE] Saved generated image to {filepath}')
-                            
-                            # Return direct_result for image
-                            direct_result = {
-                                'direct_result': {
-                                    'kind': 'photo',
-                                    'format': 'path',
-                                    'value': filepath
-                                }
-                            }
-                            
-                            # If there's also text, we'll return the image as direct_result
-                            # and the text will be handled separately if needed
-                            return direct_result, has_grounding, True
-                            
-                        except Exception as e:
-                            logging.error(f'[IMAGE] Error processing image from response: {str(e)}')
-                            # Continue with text processing if image processing fails
-            
-            if check_grounding:
-                has_grounding = (hasattr(candidate, 'grounding_metadata') and 
-                               candidate.grounding_metadata and 
-                               hasattr(candidate.grounding_metadata, 'web_search_queries') and 
-                               candidate.grounding_metadata.web_search_queries is not None)
-            
-            if hasattr(candidate, 'finish_reason') and candidate.finish_reason == 'STOP':
-                is_final = True
-
-        return answer, has_grounding, is_final
-
     def reset_conversation(self, chat_id: int):
-        """Reset the conversation history for a specific chat"""
-        if chat_id in self.conversations:
-            self.conversations[chat_id] = []
+        """Reset the interaction history for a specific chat"""
+        if chat_id in self.previous_interactions:
+            del self.previous_interactions[chat_id]
         if chat_id in self.last_updated:
             del self.last_updated[chat_id]
 
@@ -334,17 +193,30 @@ class GoogleAIHelper:
     async def interpret_image(self, chat_id: int, fileobj, user_name: str | None, prompt=None, use_image_model=False) -> str | Dict:
         # Log vision request
         logging.info(f'[VISION] Vision request: prompt="{prompt}", user_name={user_name}, use_image_model={use_image_model}')
-        
-        response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=False, use_image_model=use_image_model)
 
+        if use_image_model:
+            response = await self.__send_legacy_vision_query(
+                fileobj, user_name, prompt, stream=False, use_image_model=True
+            )
+            return self.__process_legacy_nonstreaming_response(response)
+
+        response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=False, use_image_model=False)
         return await self.__process_nonstreaming_response(response, chat_id)
 
     async def interpret_image_stream(self, chat_id: int, fileobj, user_name: str | None, prompt=None, use_image_model=False) -> tuple[str | Dict, bool, bool]:
         # Log streaming vision request
         logging.info(f'[VISION] Starting interpret_image_stream: prompt="{prompt}", user_name={user_name}, use_image_model={use_image_model}')
-        
-        response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=True, use_image_model=use_image_model)
-        
+
+        if use_image_model:
+            response = await self.__send_legacy_vision_query(
+                fileobj, user_name, prompt, stream=True, use_image_model=True
+            )
+            async for answer, is_final in self.__process_legacy_streaming_response(response):
+                yield answer, is_final, is_final
+            return
+
+        response = await self.__send_vision_query(chat_id, fileobj, user_name, prompt, stream=True, use_image_model=False)
+
         async for answer, is_final in self.__process_streaming_response(response, chat_id):
             yield answer, is_final, is_final
 
@@ -357,49 +229,21 @@ class GoogleAIHelper:
     async def __send_vision_query(self, chat_id: int, fileobj, user_name: str | None, prompt=None, stream=False, use_image_model=False):
         bot_language = self.config['bot_language']
         try:
-            # Choose model based on use_image_model flag
-            if use_image_model:
-                model = self.config.get('image_model', 'gemini-3-pro-image-preview')
-                logging.info(f'[VISION] Using image model for editing: {model}')
-            else:
-                model = self.config['model']
-                logging.info(f'[VISION] Using regular model for recognition: {model}')
-            
+            model = self.config['model']
             logging.info(f'[VISION] Vision API request: model={model}, prompt="{prompt}", stream={stream}, use_image_model={use_image_model}')
 
             # Set default prompt if none provided and no history
             if not prompt or not prompt.strip():
-                if not (chat_id in self.conversations and self.conversations[chat_id]):
+                if chat_id not in self.previous_interactions:
                     # No history - use default vision prompt
                     prompt = self.config['vision_prompt']
             
+            speaker = user_name or "User"
             # Add user name if provided
             if user_name and prompt and prompt.strip():
                 prompt = f"{user_name}: {prompt}"
             else:
-                prompt = f"{user_name} sends a picture"
-            
-            # Create parts with image and prompt (if any)
-            parts = [types.Part.from_bytes(
-                data=fileobj.getvalue(),
-                mime_type='image/png',
-            )]
-            if prompt and prompt.strip():
-                parts.append(types.Part(text=prompt))
-            
-            # Create contents
-            # For image models, don't use conversation history to avoid thought_signature issues
-            if use_image_model:
-                # Image editing doesn't need conversation history
-                contents = [types.Content(role="user", parts=parts)]
-                logging.info(f'[VISION] Using image model, skipping conversation history')
-            elif chat_id in self.conversations and self.conversations[chat_id]:
-                # Include conversation history for regular vision
-                contents = self.conversations[chat_id].copy()
-                contents.append(types.Content(role="user", parts=parts))
-            else:
-                # No history, just send current image and prompt
-                contents = [types.Content(role="user", parts=parts)]
+                prompt = f"{speaker} sends a picture"
 
             # Create config with system instructions
             logging.info(f'[VISION] Creating config with system instructions')
@@ -408,23 +252,62 @@ class GoogleAIHelper:
                 instructions += self.config['assistant_prompt']
                 logging.info(f'[VISION] Added assistant prompt: {self.config["assistant_prompt"]}')
 
-            # Configure response modalities based on use_image_model
-            if use_image_model:
-                # Enable both TEXT and IMAGE response modalities for image editing
-                config = types.GenerateContentConfig(
-                    system_instruction=instructions,
-                    response_modalities=["TEXT", "IMAGE"]
-                )
-                logging.info(f'[VISION] Config created with response_modalities=["TEXT", "IMAGE"] for image editing')
+            interaction_input = [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image",
+                    "data": base64.b64encode(fileobj.getvalue()).decode('utf-8'),
+                    "mime_type": "image/png",
+                },
+            ]
+            interaction_args = self.__interaction_request_args(
+                chat_id=chat_id,
+                input_payload=interaction_input,
+                system_instruction=instructions,
+                tools=[],
+                stream=stream,
+            )
+
+            response = await self.client.aio.interactions.create(**interaction_args)
+
+            logging.info(f'[VISION] Response received: type={type(response).__name__}')
+
+            return response
+
+        except Exception as e:
+            logging.error(f'[VISION] Vision general error: {str(e)}')
+            raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
+
+    async def __send_legacy_vision_query(self, fileobj, user_name: str | None, prompt=None, stream=False, use_image_model=False):
+        bot_language = self.config['bot_language']
+        try:
+            model = self.config.get('image_model', 'gemini-3-pro-image-preview')
+            logging.info(f'[VISION] Using image model for editing: {model}')
+            logging.info(f'[VISION] Vision API request: model={model}, prompt="{prompt}", stream={stream}, use_image_model={use_image_model}')
+
+            speaker = user_name or "User"
+            if user_name and prompt and prompt.strip():
+                prompt = f"{user_name}: {prompt}"
             else:
-                # Only TEXT for recognition
-                config = types.GenerateContentConfig(
-                    system_instruction=instructions
-                )
-                logging.info(f'[VISION] Config created with TEXT only for recognition')
+                prompt = f"{speaker} sends a picture"
 
+            parts = [types.Part.from_bytes(
+                data=fileobj.getvalue(),
+                mime_type='image/png',
+            )]
+            if prompt and prompt.strip():
+                parts.append(types.Part(text=prompt))
 
-            # Send vision request with history
+            contents = [types.Content(role="user", parts=parts)]
+            instructions = MULTIUSER_CHAT_INSTRUCTIONS
+            if 'assistant_prompt' in self.config and self.config['assistant_prompt']:
+                instructions += self.config['assistant_prompt']
+
+            config = types.GenerateContentConfig(
+                system_instruction=instructions,
+                response_modalities=["TEXT", "IMAGE"]
+            )
+
             if stream:
                 response = await self.client.aio.models.generate_content_stream(
                     model=model,
@@ -438,14 +321,147 @@ class GoogleAIHelper:
                     config=config
                 )
 
-            logging.info(f'[VISION] Response received: type={type(response).__name__}')
-            #print_object('[VISION] Response:', response)
-
+            logging.info(f'[VISION] Legacy response received: type={type(response).__name__}')
             return response
-
         except Exception as e:
-            logging.error(f'[VISION] Vision general error: {str(e)}')
+            logging.error(f'[VISION] Legacy vision error: {str(e)}')
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
+
+    def __interaction_request_args(self, chat_id: int, input_payload, system_instruction: str, tools: list, stream: bool) -> dict:
+        args = {
+            'model': self.config['model'],
+            'input': input_payload,
+            'system_instruction': system_instruction,
+            'generation_config': {
+                'temperature': self.config.get('temperature', 1.0),
+                'top_p': self.config.get('top_p', 1.0),
+                'max_output_tokens': self.config.get('max_output_tokens', 8192),
+            },
+            'stream': stream,
+        }
+        if tools:
+            args['tools'] = tools
+        previous_interaction_id = self.previous_interactions.get(chat_id)
+        if previous_interaction_id:
+            args['previous_interaction_id'] = previous_interaction_id
+        return args
+
+    def __extract_interaction_output(self, interaction) -> tuple[str | Dict, bool]:
+        outputs = getattr(interaction, 'outputs', None) or []
+        text_parts = []
+
+        for output in outputs:
+            output_type = getattr(output, 'type', '')
+            if output_type == 'text' and getattr(output, 'text', None):
+                text_parts.append(output.text)
+            elif output_type == 'image' and getattr(output, 'data', None):
+                return self.__direct_result_from_base64_image(output.data, getattr(output, 'mime_type', 'image/png')), False
+
+        answer = "\n".join(part for part in text_parts if part).strip()
+        return answer, self.__interaction_used_grounding(interaction)
+
+    def __interaction_used_grounding(self, interaction) -> bool:
+        outputs = getattr(interaction, 'outputs', None) or []
+        for output in outputs:
+            output_type = getattr(output, 'type', '')
+            if 'search' in output_type or 'ground' in output_type or 'url_context' in output_type:
+                return True
+        return False
+
+    def __store_interaction_id(self, chat_id: int, interaction) -> None:
+        interaction_id = getattr(interaction, 'id', None)
+        if interaction_id:
+            self.previous_interactions[chat_id] = interaction_id
+
+    def __direct_result_from_base64_image(self, encoded_image: str, mime_type: str) -> Dict:
+        ext = 'png'
+        if 'jpeg' in mime_type or 'jpg' in mime_type:
+            ext = 'jpg'
+        elif 'webp' in mime_type:
+            ext = 'webp'
+
+        filepath = random_file_name(directory_name="uploads/images", extension=ext)
+        with open(filepath, "wb") as f:
+            f.write(base64.b64decode(encoded_image))
+
+        logging.info(f'[IMAGE] Saved generated image to {filepath}')
+        return {
+            'direct_result': {
+                'kind': 'photo',
+                'format': 'path',
+                'value': filepath
+            }
+        }
+
+    def __process_legacy_nonstreaming_response(self, response) -> str | Dict:
+        answer = response.text
+
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                for part in candidate.content.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data is not None:
+                        image_bytes = part.inline_data.data
+                        mime_type = part.inline_data.mime_type if hasattr(part.inline_data, 'mime_type') else 'image/png'
+                        ext = 'png'
+                        if 'jpeg' in mime_type or 'jpg' in mime_type:
+                            ext = 'jpg'
+                        elif 'webp' in mime_type:
+                            ext = 'webp'
+
+                        filepath = random_file_name(directory_name="uploads/images", extension=ext)
+                        with open(filepath, "wb") as f:
+                            f.write(image_bytes)
+
+                        logging.info(f'[IMAGE] Saved generated image to {filepath}')
+                        return {
+                            'direct_result': {
+                                'kind': 'photo',
+                                'format': 'path',
+                                'value': filepath
+                            }
+                        }
+
+        return answer or localized_text('empty_response', self.config['bot_language'])
+
+    async def __process_legacy_streaming_response(self, response) -> tuple[str | Dict, bool]:
+        answer = ''
+
+        async for chunk in response:
+            chunk_text = chunk.text
+
+            if hasattr(chunk, 'candidates') and chunk.candidates:
+                candidate = chunk.candidates[0]
+                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'inline_data') and part.inline_data is not None:
+                            image_bytes = part.inline_data.data
+                            mime_type = part.inline_data.mime_type if hasattr(part.inline_data, 'mime_type') else 'image/png'
+                            ext = 'png'
+                            if 'jpeg' in mime_type or 'jpg' in mime_type:
+                                ext = 'jpg'
+                            elif 'webp' in mime_type:
+                                ext = 'webp'
+
+                            filepath = random_file_name(directory_name="uploads/images", extension=ext)
+                            with open(filepath, "wb") as f:
+                                f.write(image_bytes)
+
+                            logging.info(f'[IMAGE] Saved generated image to {filepath}')
+                            yield {
+                                'direct_result': {
+                                    'kind': 'photo',
+                                    'format': 'path',
+                                    'value': filepath
+                                }
+                            }, True
+                            return
+
+            if chunk_text:
+                answer += chunk_text
+                yield answer, False
+
+        yield answer or localized_text('empty_response', self.config['bot_language']), True
 
     #########################################################
     # Image model

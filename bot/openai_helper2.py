@@ -15,7 +15,7 @@ import io
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 from plugin_manager import PluginManager
-from utils import is_direct_result, direct_result_kind, localized_text, print_object, random_file_name
+from utils import is_direct_result, direct_result_kind, localized_text, random_file_name
 from constants import MULTIUSER_CHAT_INSTRUCTIONS
 
 class OpenAIHelper2:
@@ -147,7 +147,7 @@ class OpenAIHelper2:
             async for event in response:
                 if response_id is None and hasattr(event, 'response') and hasattr(event.response, 'id'):
                     response_id = event.response.id
-                    print_object("__handle_function_call response_id!!!:", response_id)
+                    logging.debug("__handle_function_call: response_id=%s", response_id)
                 
                 if event.type == 'response.output_item.added':
                     if event.item.type == 'function_call':
@@ -197,7 +197,11 @@ class OpenAIHelper2:
             function_name = function_call.name
             arguments = function_call.arguments 
             
-            logging.info(f"__execute_function_calls: calling function '{function_name}' with arguments: {arguments}")
+            logging.info(
+                "__execute_function_calls: calling function '%s' with arguments_length=%s",
+                function_name,
+                len(arguments or "")
+            )
             function_response = await self.plugin_manager.call_function(function_name, self, arguments)
             logging.info(f"__execute_function_calls: function '{function_name}' returned: {type(function_response)}")
             
@@ -232,10 +236,13 @@ class OpenAIHelper2:
                 elif chat_id in self.last_response_ids and self.last_response_ids[chat_id]:
                     common_args['previous_response_id'] = self.last_response_ids[chat_id]
 
-                print(f"__execute_function_calls direct_result follow-up: {json.dumps(common_args, indent=2, ensure_ascii=False)}")
+                logging.debug(
+                    "__execute_function_calls: direct_result follow-up prepared with input_count=%s",
+                    len(input_list)
+                )
                 new_response = await self.client.responses.create(**common_args)
 
-                logging.info(f"__execute_function_calls: follow-up API call completed, handling response, {new_response.output_text}")      
+                logging.info("__execute_function_calls: direct_result follow-up API call completed")
 
                 self.last_response_ids[chat_id] = new_response.id
                 
@@ -264,7 +271,12 @@ class OpenAIHelper2:
             common_args['tools'] = tools
             common_args['tool_choice'] = 'auto' if times < self.config.get('functions_max_consecutive_calls', 5) else 'none'
 
-        print(f"__execute_function_calls common_args: {json.dumps(common_args, indent=2, ensure_ascii=False)}")
+        logging.debug(
+            "__execute_function_calls: follow-up request prepared with input_count=%s, tools_count=%s, stream=%s",
+            len(input_list),
+            len(common_args.get('tools', [])),
+            stream
+        )
         new_response = await self.client.responses.create(**common_args)
         logging.info(f"__execute_function_calls: follow-up API call completed, handling response")
         
@@ -523,7 +535,7 @@ class OpenAIHelper2:
                 elif self.config['whisper_prompt']:
                     prompt_text += self.config['whisper_prompt']
                 
-                print(f"transcribe prompt: {prompt_text}")
+                logging.debug("transcribe prompt length=%s", len(prompt_text))
                 result = await self.client.audio.transcriptions.create(model="whisper-1", file=audio, prompt=prompt_text)
                 return result.text
         except Exception as e:

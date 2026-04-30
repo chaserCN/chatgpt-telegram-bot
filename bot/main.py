@@ -92,7 +92,7 @@ def main():
     elif ai_provider == 'google':
         model = os.environ.get('GOOGLE_MODEL', 'gemini-3-pro-preview')
     else:  # claude
-        model = os.environ.get('CLAUDE_MODEL', 'claude-sonnet-4-20250514')
+        model = os.environ.get('CLAUDE_MODEL', 'claude-opus-4-7')
 
     # Common configuration
     common_config = {
@@ -148,6 +148,10 @@ def main():
             **common_config,
             'api_key': os.environ['CLAUDE_API_KEY'],
             'whisper_prompt': os.environ.get('WHISPER_PROMPT', ''),
+            'managed_agent_id': os.environ.get('CLAUDE_MANAGED_AGENT_ID'),
+            'managed_environment_id': os.environ.get('CLAUDE_MANAGED_ENVIRONMENT_ID'),
+            'managed_agent_name': os.environ.get('CLAUDE_MANAGED_AGENT_NAME', 'Telegram Claude Agent'),
+            'managed_environment_name': os.environ.get('CLAUDE_MANAGED_ENVIRONMENT_NAME', 'telegram-claude-env'),
         }
 
     if os.environ.get('MONTHLY_USER_BUDGETS') is not None:

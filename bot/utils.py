@@ -161,7 +161,7 @@ async def send_message_with_retry(update: Update,
         # Step 1: Always sanitize the text first and try sending.
         fixed_text = fix_telegram_html_formatting(text)
 
-        logging.info("sanitazed text:\n---\n%s\n---", fixed_text)
+        logging.debug("sanitized text length=%s", len(fixed_text))
         
         # Process for LaTeX if enabled
         if enable_latex:
@@ -762,5 +762,4 @@ def print_object(title, obj):
         pprint(obj_data)
     else:
         print(f"{title}: {json.dumps(obj_data, indent=2, ensure_ascii=False, default=str)}")
-
 

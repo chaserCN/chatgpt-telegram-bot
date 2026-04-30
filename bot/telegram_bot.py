@@ -507,32 +507,10 @@ class ChatGPTTelegramBot:
 
         await wrap_with_indicator(update, context, _execute, constants.ChatAction.TYPING)
 
-    def print_nested(self, obj, indent=0):
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                print('  ' * indent + str(key) + ':')
-                if isinstance(value, (dict, list)):
-                    print('\n')
-                    self.print_nested(value, indent + 1)
-                else:
-                    print('  ' * (indent + 1) + str(value) + '\n')
-        elif isinstance(obj, list):
-            for index, item in enumerate(obj):
-                print('  ' * indent + f'[{index}]:')
-                if isinstance(item, (dict, list)):
-                    print('\n')
-                    self.print_nested(item, indent + 1)
-                else:
-                    print('  ' * (indent + 1) + str(item) + '\n')
-        else:
-            print('  ' * indent + str(obj) + '\n')
-
     async def prompt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         React to incoming messages and respond accordingly.
         """
-
-        #self.print_nested(update)
 
         if update.edited_message or not update.message or update.message.via_bot:
             return
@@ -551,7 +529,9 @@ class ChatGPTTelegramBot:
         # Only process if /image is at the start or after group_trigger_keyword
         original_text = update.message.text or ""
         
-        logging.info(f'[PROMPT] Checking for /image command. Original text: "{original_text}", entities: {update.message.entities}')
+        logging.info(
+            f'[PROMPT] Checking for /image command. text_length={len(original_text)}, entities={len(update.message.entities or [])}'
+        )
         
         # Check if we should process /image command
         should_process_image = False
@@ -601,7 +581,9 @@ class ChatGPTTelegramBot:
                 # Fallback: remove /image if found anywhere
                 image_prompt = original_text.replace('/image', '').strip()
             
-            logging.info(f'[PROMPT] Detected /image command in text, redirecting to image handler. Original: "{original_text}", Prompt: "{image_prompt}"')
+            logging.info(
+                f'[PROMPT] Detected /image command in text, redirecting to image handler. prompt_length={len(image_prompt)}'
+            )
             # Call image handler with prompt override (since update.message.text is read-only)
             return await self.image(update, context, prompt_override=image_prompt)
         
@@ -654,7 +636,6 @@ class ChatGPTTelegramBot:
                     stream_chunk = 0
 
                     async for content, is_finished in response_stream:
-                        print("[BOT] Received is_finished:", is_finished, 'content', content)
                         if is_direct_result(content):
                             return await handle_direct_result(self.config, update, content)
 
@@ -686,8 +667,6 @@ class ChatGPTTelegramBot:
 
                         if i == 0:
                             try:
-                                print("[BOT] First message")
-
                                 if sent_message is not None:
                                     await context.bot.delete_message(chat_id=sent_message.chat_id,
                                                                      message_id=sent_message.message_id)
@@ -699,14 +678,13 @@ class ChatGPTTelegramBot:
                                                                              message_thread_id=get_thread_id(update),
                                                                              enable_latex=self.config['enable_latex'])
                             except Exception as e:
-                                print("[BOT] Error:", e)
+                                logging.debug("[BOT] First streaming send failed: %s", e)
                                 continue
 
                         elif abs(len(content) - len(prev)) > cutoff or is_finished:
                             prev = content
 
                             try:
-                                print("[BOT] Editing message")
                                 await edit_message_with_retry(context, chat_id, str(sent_message.message_id),
                                                               text=content, markdown=is_finished)
 
@@ -724,8 +702,6 @@ class ChatGPTTelegramBot:
                                 backoff += 5
                                 continue
                         else:
-                            print("[BOT] No editing message:", abs(len(content) - len(prev)), cutoff)
-
                             await asyncio.sleep(0.01)
 
                         i += 1
