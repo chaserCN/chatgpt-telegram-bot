@@ -182,7 +182,16 @@ class ClaudeHelper:
                         has_web_search = True
                         logging.info(f'[CLAUDE STREAM] Web search detected in chunk {chunk_count}')
                 elif event_type == "session.error":
-                    raise Exception(getattr(event, 'message', 'Managed session error'))
+                    error_obj = getattr(event, 'error', None)
+                    error_type = getattr(error_obj, 'type', 'unknown_error')
+                    error_message = getattr(error_obj, 'message', None) or getattr(event, 'message', None) or 'Managed session error'
+                    logging.error(
+                        "[CLAUDE STREAM] session.error: type=%s, message=%s, event=%r",
+                        error_type,
+                        error_message,
+                        event,
+                    )
+                    raise Exception(f"{error_type}: {error_message}")
                 elif event_type == "session.status_idle":
                     stop_reason = getattr(event, 'stop_reason', None)
                     stop_type = getattr(stop_reason, 'type', None)
