@@ -2,6 +2,7 @@ import logging
 import os
 import string
 import random
+import html
 from typing import Dict
 from urllib.parse import quote_plus
 
@@ -381,14 +382,17 @@ class PlacesPlugin(Plugin):
             lng = float(place['longitude'])
             maps_url = place.get('maps_url') or f'https://www.google.com/maps/search/?api=1&query={lat},{lng}'
 
-            safe_name = self._md_escape(name)
-            link = f'[{safe_name}]({maps_url})'
+            safe_name = self._html_escape(name)
+            safe_address = self._html_escape(address)
+            safe_comment = self._html_escape(comment)
+            safe_maps_url = html.escape(maps_url, quote=True)
+            link = f'<a href="{safe_maps_url}">{safe_name}</a>'
 
             line = f'{label}. {link}'
-            if address:
-                line += f' — {address}'
+            if safe_address:
+                line += f' - {safe_address}'
             if comment:
-                line += f'\n   {comment}'
+                line += f'\n   {safe_comment}'
             lines.append(line)
 
             marker_params.append(f'markers=color:red%7Clabel:{label}%7C{lat},{lng}')
@@ -396,7 +400,7 @@ class PlacesPlugin(Plugin):
         items.append({
             'type': 'text',
             'text': '\n\n'.join(lines),
-            'parse_mode': 'Markdown',
+            'parse_mode': 'HTML',
         })
 
         size = '640x640' if len(picked) > 4 else '640x480'
@@ -482,8 +486,16 @@ class PlacesPlugin(Plugin):
             f'&destination={quote_plus(destination)}'
             f'&travelmode={mode}'
         )
+        deep_link_waypoints = clean_waypoints
+        waypoint_order = route.get('waypoint_order') or []
+        if optimize_waypoints and waypoint_order:
+            deep_link_waypoints = [
+                clean_waypoints[index]
+                for index in waypoint_order
+                if isinstance(index, int) and 0 <= index < len(clean_waypoints)
+            ]
         if clean_waypoints:
-            deep_link += '&waypoints=' + quote_plus('|'.join(clean_waypoints))
+            deep_link += '&waypoints=' + quote_plus('|'.join(deep_link_waypoints))
 
         first_leg = legs[0] if legs else {}
         last_leg = legs[-1] if legs else {}
@@ -523,6 +535,12 @@ class PlacesPlugin(Plugin):
             else:
                 out.append(ch)
         return ''.join(out)
+
+    @staticmethod
+    def _html_escape(text: str) -> str:
+        if not text:
+            return ''
+        return html.escape(text, quote=False)
 
     @staticmethod
     def _strip_html(html: str) -> str:
