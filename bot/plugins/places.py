@@ -138,7 +138,20 @@ class PlacesPlugin(Plugin):
                     'Call this AFTER search_places or find_nearby_places, picking the relevant '
                     'candidates and writing a short personal commentary for each one '
                     '(why it stands out, what to expect, who it suits). '
-                    'Order matters: the first place gets label A on the map and #1 in the list.'
+                    'Order matters: the first place gets label A on the map and #1 in the list.\n'
+                    '\n'
+                    'DO NOT use this for routes, walks, strolls, walking tours, itineraries, '
+                    'or anything time-bounded ("30 minutes on foot", "a short walk"). Pins on '
+                    'a map are not a route — the user wants a path they can follow turn by '
+                    'turn. For all of those, use get_directions with waypoints instead, even '
+                    'if the user phrased the request as "show me places".\n'
+                    '\n'
+                    'MUTUALLY EXCLUSIVE WITH get_directions. In a single user turn, call '
+                    'either get_directions (for any walk / route / itinerary) OR present_places '
+                    '(for browsing standalone places to choose from), NEVER both. If you have '
+                    'already called get_directions in this turn, the route reply IS the answer '
+                    '— do not also call present_places to pin the same spots. Pins on top of a '
+                    'route make the reply noisier, not richer.'
                 ),
                 'parameters': {
                     'type': 'object',
@@ -187,9 +200,45 @@ class PlacesPlugin(Plugin):
                 'type': 'function',
                 'name': 'get_directions',
                 'description': (
-                    'Get a route between two points. Returns distance, duration and step-by-step '
-                    'instructions, plus a Google Maps deep link the user can tap to open in their '
-                    'native maps app with the route preloaded.'
+                    'Build a route between two points, optionally via intermediate waypoints. '
+                    'Returns distance, duration, step-by-step instructions and a Google Maps '
+                    'deep link the user can tap to open the route in their native maps app. '
+                    'USE THIS (not present_places) whenever the user asks for a route, a walk, '
+                    'a stroll, a "walking tour", or anything time-bounded like "30 minutes on foot". '
+                    'If the user did not give a destination (e.g. "a 30-min walk from X"), '
+                    'set destination = origin to make a loop.\n'
+                    '\n'
+                    'How to design a scenic walk (do this BEFORE collecting waypoints):\n'
+                    '1. State the concept in one sentence — theme, mood, what makes this walk '
+                    '   different from a generic top-sights list (e.g. "quiet covered passages '
+                    '   and bookshops, ending at a riverside view"). Skip the obvious tourist '
+                    '   spine unless it fits the concept.\n'
+                    '2. Pick waypoints by going through these categories, not by grabbing '
+                    '   famous POIs: pedestrian/cobbled streets, covered passages and arcades, '
+                    '   hidden courtyards, food markets, riverbanks and bridges, viewpoints, '
+                    '   small squares, neighbourhood landmarks. Lean on your own knowledge of '
+                    '   the city first — search_places is for getting coordinates of spots you '
+                    '   already chose, not for discovering them.\n'
+                    '3. For each waypoint, hold a one-line "why" in mind: what is interesting '
+                    '   about THIS specific spot (a view, a detail, atmosphere, history) — not '
+                    '   a Wikipedia summary. If you cannot write a non-generic "why", drop '
+                    '   that waypoint and pick another. Surface those "why" notes in your '
+                    '   reply to the user, one short line per waypoint.\n'
+                    '\n'
+                    'MUTUALLY EXCLUSIVE WITH present_places: never call present_places in '
+                    'the same turn as get_directions. The route reply already shows the path '
+                    'and the waypoints — pinning them again is redundant. Surface the waypoints '
+                    'as a numbered list in your text reply (with the one-line "why" for each), '
+                    'and let the deep link be the map.\n'
+                    '\n'
+                    'Length: walking pace ≈80 m/min, so a 30-min stroll ≈2.5 km. The number '
+                    'of waypoints depends on the area — in dense quarters (Latin Quarter, '
+                    'Marais, Montmartre, old town centres) interesting spots sit every 100 m '
+                    'and 7-8 waypoints on a short walk are fine; in sparser districts 3-4 are '
+                    'plenty. Pick by density of worthwhile spots, not by a fixed quota. After '
+                    'this call returns, compare the actual `duration` to what the user asked '
+                    'for — if it is off by more than ~25%, silently rebuild with a different '
+                    'route and call again. Do not apologise, do not ask the user, just fix it.'
                 ),
                 'parameters': {
                     'type': 'object',
@@ -200,7 +249,26 @@ class PlacesPlugin(Plugin):
                         },
                         'destination': {
                             'type': 'string',
-                            'description': 'End address, place name, or "lat,lng".',
+                            'description': (
+                                'End address, place name, or "lat,lng". '
+                                'For a loop walk back to the start, pass the same value as origin.'
+                            ),
+                        },
+                        'waypoints': {
+                            'type': 'array',
+                            'description': (
+                                'Optional ordered intermediate stops. Each item is an address, '
+                                'place name, or "lat,lng". Order is preserved unless '
+                                'optimize_waypoints is true. Max 10 to keep the deep link short.'
+                            ),
+                            'items': {'type': 'string'},
+                        },
+                        'optimize_waypoints': {
+                            'type': 'boolean',
+                            'description': (
+                                'If true, Google reorders waypoints for the shortest route. '
+                                'Leave false (default) for curated scenic walks where order matters.'
+                            ),
                         },
                         'mode': {
                             'type': 'string',
@@ -374,13 +442,21 @@ class PlacesPlugin(Plugin):
             }
         }
 
-    def _get_directions(self, origin, destination, mode='walking', **_) -> Dict:
+    def _get_directions(self, origin, destination, mode='walking',
+                        waypoints=None, optimize_waypoints=False, **_) -> Dict:
+        mode = mode or 'walking'
+        clean_waypoints = [w for w in (waypoints or []) if w and str(w).strip()][:10]
+
         params = {
             'origin': origin,
             'destination': destination,
-            'mode': mode or 'walking',
+            'mode': mode,
             'key': self.api_key,
         }
+        if clean_waypoints:
+            prefix = 'optimize:true|' if optimize_waypoints else ''
+            params['waypoints'] = prefix + '|'.join(clean_waypoints)
+
         r = requests.get(DIRECTIONS_URL, params=params, timeout=15)
         data = r.json()
         if data.get('status') != 'OK':
@@ -389,27 +465,40 @@ class PlacesPlugin(Plugin):
                 'details': data.get('error_message') or '',
             }
         route = data['routes'][0]
-        leg = route['legs'][0]
-        steps = [
-            {
-                'instruction': self._strip_html(s.get('html_instructions', '')),
-                'distance': s.get('distance', {}).get('text'),
-                'duration': s.get('duration', {}).get('text'),
-                'travel_mode': s.get('travel_mode'),
-            }
-            for s in leg.get('steps', [])
-        ]
+        legs = route.get('legs', [])
+        steps = []
+        total_distance_m = 0
+        total_duration_s = 0
+        for leg in legs:
+            total_distance_m += (leg.get('distance') or {}).get('value', 0)
+            total_duration_s += (leg.get('duration') or {}).get('value', 0)
+            for s in leg.get('steps', []):
+                steps.append({
+                    'instruction': self._strip_html(s.get('html_instructions', '')),
+                    'distance': (s.get('distance') or {}).get('text'),
+                    'duration': (s.get('duration') or {}).get('text'),
+                    'travel_mode': s.get('travel_mode'),
+                })
+
         deep_link = (
             'https://www.google.com/maps/dir/?api=1'
             f'&origin={quote_plus(origin)}'
             f'&destination={quote_plus(destination)}'
-            f'&travelmode={mode or "walking"}'
+            f'&travelmode={mode}'
         )
+        if clean_waypoints:
+            deep_link += '&waypoints=' + quote_plus('|'.join(clean_waypoints))
+
+        first_leg = legs[0] if legs else {}
+        last_leg = legs[-1] if legs else {}
         return {
-            'distance': leg['distance']['text'],
-            'duration': leg['duration']['text'],
-            'start_address': leg.get('start_address'),
-            'end_address': leg.get('end_address'),
+            'distance': self._format_distance(total_distance_m),
+            'duration': self._format_duration(total_duration_s),
+            'distance_meters': total_distance_m,
+            'duration_seconds': total_duration_s,
+            'start_address': first_leg.get('start_address'),
+            'end_address': last_leg.get('end_address'),
+            'waypoint_order': route.get('waypoint_order'),
             'steps': steps,
             'deep_link': deep_link,
         }
@@ -444,3 +533,17 @@ class PlacesPlugin(Plugin):
         import re
         text = re.sub(r'<[^>]+>', ' ', html or '')
         return re.sub(r'\s+', ' ', text).strip()
+
+    @staticmethod
+    def _format_distance(meters: int) -> str:
+        if meters >= 1000:
+            return f'{meters / 1000:.1f} km'
+        return f'{int(meters)} m'
+
+    @staticmethod
+    def _format_duration(seconds: int) -> str:
+        minutes = round(seconds / 60)
+        if minutes < 60:
+            return f'{minutes} min'
+        hours, mins = divmod(minutes, 60)
+        return f'{hours} h {mins} min' if mins else f'{hours} h'
