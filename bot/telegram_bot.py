@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import os
 import io
@@ -56,6 +57,7 @@ class ChatGPTTelegramBot:
         self.budget_limit_message = localized_text('budget_limit', bot_language)
         self.last_message = {}
         self.inline_queries_cache = {}
+        self.last_user_locations = {}  # chat_id -> (lat, lng, datetime)
         
         # Initialize addressing words
         addressing_words_str = self.config.get('bot_addressing_words', '')
@@ -95,6 +97,7 @@ class ChatGPTTelegramBot:
         chat_id = update.effective_chat.id
         reset_content = message_text(update.message)
         self.openai.reset_chat_history(chat_id=chat_id, content=reset_content)
+        self.last_user_locations.pop(chat_id, None)
         await update.effective_message.reply_text(
             message_thread_id=get_thread_id(update),
             text=localized_text('reset_done', self.config['bot_language'])
@@ -507,6 +510,34 @@ class ChatGPTTelegramBot:
 
         await wrap_with_indicator(update, context, _execute, constants.ChatAction.TYPING)
 
+    async def location(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Handle a shared location: remember it for the chat and prompt the user
+        to ask what to find nearby. The next prompt() call will inject these
+        coordinates as context for the LLM.
+        """
+        if not update.message or not update.message.location:
+            return
+        if not await self.check_allowed_and_within_budget(update, context):
+            return
+
+        chat_id = update.effective_chat.id
+        loc = update.message.location
+        self.last_user_locations[chat_id] = (loc.latitude, loc.longitude, datetime.datetime.now())
+
+        logging.info(
+            f'Location received: chat_id={chat_id} lat={loc.latitude} lng={loc.longitude}'
+        )
+
+        if not is_group_chat(update):
+            await update.effective_message.reply_text(
+                text=f'Получил координаты ({loc.latitude:.5f}, {loc.longitude:.5f}). '
+                     f'Что найти рядом?',
+                message_thread_id=get_thread_id(update),
+                reply_to_message_id=update.message.message_id,
+                disable_web_page_preview=True,
+            )
+
     async def prompt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         React to incoming messages and respond accordingly.
@@ -618,6 +649,17 @@ class ChatGPTTelegramBot:
                 else:
                     logging.warning('Message does not start with trigger keyword or addressing words, ignoring...')
                     return
+
+        loc_entry = self.last_user_locations.get(chat_id)
+        if loc_entry:
+            lat, lng, ts = loc_entry
+            if (datetime.datetime.now() - ts).total_seconds() < 300:
+                prompt = (
+                    f'[User\'s current location: latitude={lat}, longitude={lng}. '
+                    f'Use these coordinates as the search center when relevant.]\n\n{prompt}'
+                )
+            else:
+                self.last_user_locations.pop(chat_id, None)
 
         sending_task = context.application.create_task(
             send_action_periodically(update, context, constants.ChatAction.TYPING)
@@ -1005,6 +1047,7 @@ class ChatGPTTelegramBot:
             filters.AUDIO | filters.VOICE | filters.Document.AUDIO |
             filters.VIDEO | filters.VIDEO_NOTE | filters.Document.VIDEO,
             self.transcribe))
+        application.add_handler(MessageHandler(filters.LOCATION, self.location))
         application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self.prompt))
         application.add_handler(InlineQueryHandler(self.inline_query, chat_types=[
             constants.ChatType.GROUP, constants.ChatType.SUPERGROUP, constants.ChatType.PRIVATE

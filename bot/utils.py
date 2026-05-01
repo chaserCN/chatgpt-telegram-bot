@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import itertools
 import json
 import logging
@@ -195,7 +196,8 @@ async def send_message_with_retry(update: Update,
                 text=chunk,
                 parse_mode=constants.ParseMode.HTML if markdown else None,
                 reply_to_message_id=reply_id,
-                message_thread_id=message_thread_id
+                message_thread_id=message_thread_id,
+                disable_web_page_preview=True,
             )
             sent_messages.append(message)
         return sent_messages[-1] if sent_messages else None
@@ -214,7 +216,8 @@ async def send_message_with_retry(update: Update,
                     text=chunk,
                     parse_mode=None, # Plain text, no HTML
                     reply_to_message_id=reply_id,
-                    message_thread_id=message_thread_id
+                    message_thread_id=message_thread_id,
+                    disable_web_page_preview=True,
                 )
                 sent_messages.append(message)
             return sent_messages[-1] if sent_messages else None
@@ -246,9 +249,10 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
             inline_message_id=message_id if is_inline else None,
             text=text,
             parse_mode=constants.ParseMode.HTML if markdown else None,
+            disable_web_page_preview=True,
         )
     except telegram.error.BadRequest as e:
-        logging.warning("BadRequest: " + str(e)) 
+        logging.warning("BadRequest: " + str(e))
 
         if str(e).startswith("Message is not modified"):
             return
@@ -260,6 +264,7 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
                 message_id=int(message_id) if not is_inline else None,
                 inline_message_id=message_id if is_inline else None,
                 text=text,
+                disable_web_page_preview=True,
             )
         except Exception as e:
             logging.warning(f'Failed to edit message: {str(e)}')
@@ -711,6 +716,52 @@ async def handle_direct_result(config, update: Update, response: any):
             await update.effective_message.reply_document(**common_args, document=open(value, 'rb'))
     elif kind == 'dice':
         await update.effective_message.reply_dice(**common_args, emoji=value)
+    elif kind == 'venue':
+        await update.effective_message.reply_venue(
+            **common_args,
+            latitude=value['latitude'],
+            longitude=value['longitude'],
+            title=value['title'],
+            address=value['address'],
+        )
+    elif kind == 'message_sequence':
+        first = True
+        for item in value:
+            item_type = item.get('type')
+            args = dict(common_args) if first else {'message_thread_id': common_args['message_thread_id']}
+            if item_type == 'text':
+                text = item.get('text', '').strip()
+                if not text:
+                    continue
+                parse_mode = item.get('parse_mode')
+                kw = dict(args)
+                if parse_mode:
+                    kw['parse_mode'] = parse_mode
+                    kw['disable_web_page_preview'] = True
+                await update.effective_message.reply_text(**kw, text=text)
+            elif item_type == 'venue':
+                await update.effective_message.reply_venue(
+                    **args,
+                    latitude=item['latitude'],
+                    longitude=item['longitude'],
+                    title=item['title'],
+                    address=item['address'],
+                )
+            elif item_type == 'photo':
+                caption = item.get('caption') or None
+                photo_payload = item.get('bytes') or item.get('url')
+                if not photo_payload:
+                    continue
+                if isinstance(photo_payload, (bytes, bytearray)):
+                    photo_payload = io.BytesIO(photo_payload)
+                await update.effective_message.reply_photo(
+                    **args,
+                    photo=photo_payload,
+                    caption=caption,
+                )
+            else:
+                continue
+            first = False
 
     if format == 'path':
         cleanup_intermediate_files(response)

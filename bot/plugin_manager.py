@@ -18,6 +18,7 @@ from plugins.deepl import DeeplTranslatePlugin
 from plugins.worldtimeapi import WorldTimeApiPlugin
 from plugins.whois_ import WhoisPlugin
 from plugins.webshot import WebshotPlugin
+from plugins.places import PlacesPlugin
 
 
 class PluginManager:
@@ -45,6 +46,7 @@ class PluginManager:
             'webshot': WebshotPlugin,
             'latex2image': LatexConverterPlugin,
             'html2image': Html2ImagePlugin,
+            'places': PlacesPlugin,
         }
         self.plugins = [plugin_mapping[plugin]() for plugin in enabled_plugins if plugin in plugin_mapping]
 
