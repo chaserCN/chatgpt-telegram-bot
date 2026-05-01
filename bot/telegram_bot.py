@@ -653,7 +653,7 @@ class ChatGPTTelegramBot:
         loc_entry = self.last_user_locations.get(chat_id)
         if loc_entry:
             lat, lng, ts = loc_entry
-            if (datetime.datetime.now() - ts).total_seconds() < 300:
+            if (datetime.datetime.now() - ts).total_seconds() < 600:
                 prompt = (
                     f'[User\'s current location: latitude={lat}, longitude={lng}. '
                     f'Use these coordinates as the search center when relevant.]\n\n{prompt}'

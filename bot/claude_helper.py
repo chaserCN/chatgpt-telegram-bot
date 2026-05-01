@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime
+import json
 import logging
 from typing import Dict
 
@@ -10,9 +11,8 @@ import anthropic
 from rich.console import Console
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
-from constants import MULTIUSER_CHAT_INSTRUCTIONS
 from plugin_manager import PluginManager
-from utils import localized_text
+from utils import localized_text, is_direct_result
 
 console = Console()
 
@@ -56,6 +56,8 @@ class ClaudeHelper:
             chat_id=chat_id,
             content_blocks=self.__text_content_blocks(query, user_name),
         ):
+            if isinstance(chunk, dict) and is_direct_result(chunk):
+                return chunk
             answer = chunk
             has_web_search = used_web_search
             if is_final:
@@ -83,6 +85,9 @@ class ClaudeHelper:
             chat_id=chat_id,
             content_blocks=self.__text_content_blocks(query, user_name),
         ):
+            if isinstance(answer, dict) and is_direct_result(answer):
+                yield answer, True
+                return
             if is_final:
                 if not answer.strip():
                     answer = localized_text('empty_response', self.config['bot_language'])
@@ -181,6 +186,11 @@ class ClaudeHelper:
                     if 'search' in tool_name:
                         has_web_search = True
                         logging.info(f'[CLAUDE STREAM] Web search detected in chunk {chunk_count}')
+                elif event_type == "agent.custom_tool_use":
+                    direct = await self.__handle_custom_tool_use(session_id, event)
+                    if direct is not None:
+                        yield direct, True, has_web_search
+                        return
                 elif event_type == "session.error":
                     error_obj = getattr(event, 'error', None)
                     error_type = getattr(error_obj, 'type', 'unknown_error')
@@ -196,7 +206,8 @@ class ClaudeHelper:
                     stop_reason = getattr(event, 'stop_reason', None)
                     stop_type = getattr(stop_reason, 'type', None)
                     if stop_type == "requires_action":
-                        raise Exception("Claude session requires manual tool confirmation")
+                        # Tool call awaiting our response; the next loop iteration will see it.
+                        continue
                     logging.info(f'[CLAUDE STREAM] Final chunk {chunk_count} received')
                     break
 
@@ -232,33 +243,66 @@ class ClaudeHelper:
     async def __ensure_managed_resources(self) -> None:
         if self.managed_agent_id and self.managed_environment_id:
             return
+        raise Exception(
+            "CLAUDE_MANAGED_AGENT_ID and CLAUDE_MANAGED_ENVIRONMENT_ID must be set. "
+            "Create them once via Anthropic API and put them in your env file."
+        )
 
-        async with self._resource_lock:
-            suffix = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-            if not self.managed_environment_id:
-                environment = await self.client.beta.environments.create(
-                    name=f"{self.config.get('managed_environment_name', 'telegram-claude-env')}-{suffix}",
-                    config={
-                        "type": "cloud",
-                        "networking": {"type": "unrestricted"},
-                    },
-                )
-                self.managed_environment_id = environment.id
-                logging.info(f'[CLAUDE MANAGED] Created environment: {environment.id}')
+    async def __handle_custom_tool_use(self, session_id: str, event) -> Dict | None:
+        """
+        Run a plugin invoked by Claude as a custom tool. Returns the parsed
+        direct_result dict if the plugin produced one (caller stops the stream
+        and propagates it), otherwise returns None after submitting a regular
+        tool result back to the session.
+        """
+        tool_use_id = getattr(event, 'id', None)
+        tool_name = getattr(event, 'name', '') or ''
+        raw_input = getattr(event, 'input', None)
+        if isinstance(raw_input, str):
+            arguments_str = raw_input
+        elif raw_input is None:
+            arguments_str = '{}'
+        else:
+            try:
+                arguments_str = json.dumps(raw_input)
+            except Exception:
+                arguments_str = '{}'
 
-            if not self.managed_agent_id:
-                system_instruction = MULTIUSER_CHAT_INSTRUCTIONS
-                if self.config.get('assistant_prompt'):
-                    system_instruction += self.config['assistant_prompt']
+        logging.info(
+            '[CLAUDE STREAM] custom_tool_use: name=%s id=%s args_len=%s',
+            tool_name, tool_use_id, len(arguments_str),
+        )
 
-                agent = await self.client.beta.agents.create(
-                    name=f"{self.config.get('managed_agent_name', 'Telegram Claude Agent')} {suffix}",
-                    model={"id": self.config['model']},
-                    system=system_instruction,
-                    tools=[{"type": "agent_toolset_20260401"}],
-                )
-                self.managed_agent_id = agent.id
-                logging.info(f'[CLAUDE MANAGED] Created agent: {agent.id}')
+        try:
+            tool_response = await self.plugin_manager.call_function(tool_name, self, arguments_str)
+        except Exception as e:
+            logging.warning('[CLAUDE STREAM] plugin %s raised: %s', tool_name, e)
+            tool_response = json.dumps({'error': str(e)})
+
+        if is_direct_result(tool_response):
+            try:
+                parsed = tool_response if isinstance(tool_response, dict) else json.loads(tool_response)
+            except Exception:
+                parsed = None
+            await self.client.beta.sessions.events.send(
+                session_id,
+                events=[{
+                    "type": "user.custom_tool_result",
+                    "custom_tool_use_id": tool_use_id,
+                    "content": [{"type": "text", "text": f"success, {tool_name} sent the result to the user."}],
+                }],
+            )
+            return parsed
+
+        await self.client.beta.sessions.events.send(
+            session_id,
+            events=[{
+                "type": "user.custom_tool_result",
+                "custom_tool_use_id": tool_use_id,
+                "content": [{"type": "text", "text": str(tool_response)}],
+            }],
+        )
+        return None
 
     async def __delete_session(self, session_id: str) -> None:
         try:

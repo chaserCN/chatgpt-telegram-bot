@@ -1,5 +1,7 @@
 import logging
 import os
+import string
+import random
 from typing import Dict
 from urllib.parse import quote_plus
 
@@ -335,21 +337,31 @@ class PlacesPlugin(Plugin):
 
         size = '640x640' if len(picked) > 4 else '640x480'
         static_map_url = (
-            f'{STATIC_MAP_URL}?size={size}&scale=2&'
+            f'{STATIC_MAP_URL}?size={size}&'
             + '&'.join(marker_params)
             + f'&key={self.api_key}'
         )
         try:
             r = requests.get(static_map_url, timeout=15)
-            if r.status_code == 200 and r.content:
+            content_type = (r.headers.get('content-type') or '').lower()
+            if (r.status_code == 200
+                    and r.content
+                    and content_type.startswith('image/')
+                    and len(r.content) <= 9_500_000):
+                map_path = self._save_temp_png(r.content)
+                logging.info(
+                    'Static Maps fetched: bytes=%s markers=%s path=%s',
+                    len(r.content), len(picked), map_path,
+                )
                 items.append({
                     'type': 'photo',
-                    'bytes': r.content,
+                    'path': map_path,
                 })
             else:
                 logging.warning(
-                    'Static Maps fetch failed: status=%s body=%s',
-                    r.status_code, r.text[:300],
+                    'Static Maps fetch skipped: status=%s ctype=%s size=%s body=%s',
+                    r.status_code, content_type, len(r.content),
+                    r.text[:300] if not content_type.startswith('image/') else '<binary>',
                 )
         except Exception as e:
             logging.warning('Static Maps fetch raised: %s', e)
@@ -401,6 +413,17 @@ class PlacesPlugin(Plugin):
             'steps': steps,
             'deep_link': deep_link,
         }
+
+    @staticmethod
+    def _save_temp_png(content: bytes) -> str:
+        directory = 'uploads'
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        name = ''.join(random.choices(string.ascii_letters + string.digits, k=15))
+        path = os.path.join(directory, f'staticmap_{name}.png')
+        with open(path, 'wb') as f:
+            f.write(content)
+        return path
 
     @staticmethod
     def _md_escape(text: str) -> str:

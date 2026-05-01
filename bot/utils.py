@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import itertools
 import json
 import logging
@@ -749,16 +748,30 @@ async def handle_direct_result(config, update: Update, response: any):
                 )
             elif item_type == 'photo':
                 caption = item.get('caption') or None
-                photo_payload = item.get('bytes') or item.get('url')
-                if not photo_payload:
-                    continue
-                if isinstance(photo_payload, (bytes, bytearray)):
-                    photo_payload = io.BytesIO(photo_payload)
-                await update.effective_message.reply_photo(
-                    **args,
-                    photo=photo_payload,
-                    caption=caption,
-                )
+                path = item.get('path')
+                url = item.get('url')
+                try:
+                    if path and os.path.exists(path):
+                        with open(path, 'rb') as f:
+                            await update.effective_message.reply_photo(
+                                **args,
+                                photo=f,
+                                caption=caption,
+                            )
+                    elif url:
+                        await update.effective_message.reply_photo(
+                            **args,
+                            photo=url,
+                            caption=caption,
+                        )
+                    else:
+                        continue
+                finally:
+                    if path and os.path.exists(path):
+                        try:
+                            os.remove(path)
+                        except OSError:
+                            pass
             else:
                 continue
             first = False
