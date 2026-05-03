@@ -459,13 +459,22 @@ class PlacesPlugin(Plugin):
         max_results=12,
         **_,
     ) -> Dict:
+        logging.info(
+            'search_restaurants: query=%r address=%r lat=%r lng=%r radius=%r max_results=%r',
+            query, address, latitude, longitude, radius_meters, max_results,
+        )
         if address:
             geocoded = self._geocode(address)
             if 'error' in geocoded:
+                logging.warning('search_restaurants: geocode failed: %s', geocoded)
                 return geocoded
             latitude = geocoded['latitude']
             longitude = geocoded['longitude']
             origin_address = geocoded['formatted_address']
+            logging.info(
+                'search_restaurants: geocoded address=%r -> lat=%s lng=%s formatted=%r',
+                address, latitude, longitude, origin_address,
+            )
         elif latitude is not None and longitude is not None:
             latitude = float(latitude)
             longitude = float(longitude)
@@ -476,8 +485,12 @@ class PlacesPlugin(Plugin):
         radius_meters = int(radius_meters or 1200)
         shortlist_size = min(int(max_results or 12), 20)
 
-        cuisine_types = self._resolve_cuisine_types(query)
-        cuisine_types = self._expand_umbrella_cuisines(cuisine_types)
+        raw_cuisine_types = self._resolve_cuisine_types(query)
+        cuisine_types = self._expand_umbrella_cuisines(raw_cuisine_types)
+        logging.info(
+            'search_restaurants: cuisine resolved raw=%s expanded=%s',
+            raw_cuisine_types, cuisine_types,
+        )
 
         google_candidates = self._discover_google_candidates(
             query=query,
@@ -487,18 +500,54 @@ class PlacesPlugin(Plugin):
             cuisine_types=cuisine_types,
         )
         if 'error' in google_candidates:
+            logging.warning('search_restaurants: candidates fetch failed: %s', google_candidates)
             return google_candidates
 
         places = google_candidates['places']
+        logging.info('search_restaurants: %d unique candidates after dedup', len(places))
+
         for place in places:
             self._score_google_only(place, radius_meters=radius_meters)
         places.sort(key=lambda item: item.get('google_score_total', 0), reverse=True)
 
-        self._enrich_restaurants_with_tripadvisor(places[:TRIPADVISOR_ENRICH_LIMIT])
+        prescore_top = places[:TRIPADVISOR_ENRICH_LIMIT]
+        logging.info(
+            'search_restaurants: top-%d by Google prescore: %s',
+            len(prescore_top),
+            [(p.get('name'), round(p.get('google_score_total', 0), 3)) for p in prescore_top],
+        )
+
+        self._enrich_restaurants_with_tripadvisor(prescore_top)
+
+        ta_matched = sum(1 for p in prescore_top if p.get('tripadvisor'))
+        ta_with_rating = sum(
+            1 for p in prescore_top
+            if p.get('tripadvisor') and p['tripadvisor'].get('rating') is not None
+        )
+        logging.info(
+            'search_restaurants: tripadvisor matched=%d/%d, with_rating=%d/%d',
+            ta_matched, len(prescore_top), ta_with_rating, len(prescore_top),
+        )
 
         for place in places:
             self._finalize_score(place)
         places.sort(key=lambda item: item.get('final_score', 0), reverse=True)
+
+        final_places = places[:shortlist_size]
+        logging.info(
+            'search_restaurants: returning %d places (shortlist=%d). Top: %s',
+            len(final_places), shortlist_size,
+            [
+                (
+                    p.get('name'),
+                    round(p.get('final_score', 0), 3),
+                    p.get('primary_type'),
+                    int(p.get('distance_from_origin_m') or -1),
+                    bool(p.get('tripadvisor') and p['tripadvisor'].get('rating') is not None),
+                )
+                for p in final_places[:5]
+            ],
+        )
 
         return {
             'origin': {
@@ -506,7 +555,7 @@ class PlacesPlugin(Plugin):
                 'latitude': latitude,
                 'longitude': longitude,
             },
-            'places': places[:shortlist_size],
+            'places': final_places,
         }
 
     def _discover_google_candidates(self, query, latitude, longitude, radius_meters, cuisine_types) -> Dict:
@@ -522,8 +571,20 @@ class PlacesPlugin(Plugin):
         if 'error' in text_result:
             return text_result
         text_places = text_result.get('places', [])
+        text_total = len(text_places)
+        logging.info(
+            'discover_google: text query=%r returned %d. Names: %s',
+            query, text_total,
+            [(p.get('name'), p.get('primary_type')) for p in text_places],
+        )
         if cuisine_types:
-            text_places = [p for p in text_places if self._matches_cuisine(p, cuisine_types)]
+            text_places_filtered = [p for p in text_places if self._matches_cuisine(p, cuisine_types)]
+            dropped = [p.get('name') for p in text_places if p not in text_places_filtered]
+            logging.info(
+                'discover_google: text cuisine filter %s passed %d/%d. Dropped: %s',
+                cuisine_types, len(text_places_filtered), text_total, dropped,
+            )
+            text_places = text_places_filtered
         for place in text_places:
             place_id = place.get('id')
             if place_id:
@@ -539,7 +600,13 @@ class PlacesPlugin(Plugin):
         )
         if 'error' in nearby:
             return nearby
-        for place in nearby.get('places', []):
+        nearby_places = nearby.get('places', [])
+        logging.info(
+            'discover_google: nearby types=%s returned %d. Names: %s',
+            nearby_types, len(nearby_places),
+            [(p.get('name'), p.get('primary_type')) for p in nearby_places],
+        )
+        for place in nearby_places:
             place_id = place.get('id')
             if place_id:
                 raw_by_id.setdefault(place_id, place)
@@ -565,25 +632,49 @@ class PlacesPlugin(Plugin):
         return any(keyword and keyword in category for keyword in cuisine_keywords)
 
     def _enrich_restaurants_with_tripadvisor(self, candidates, concurrency=4):
-        if not self.tripadvisor_api_key or not self.gemini_client or not candidates:
+        if not self.tripadvisor_api_key:
+            logging.info('enrich_ta: no tripadvisor_api_key, skipping')
+            return
+        if not self.gemini_client:
+            logging.info('enrich_ta: no gemini_client, skipping')
+            return
+        if not candidates:
             return
 
         def work(candidate):
+            name = candidate.get('name')
             try:
                 results = self._tripadvisor_search(
-                    query=candidate.get('name'),
+                    query=name,
                     latitude=candidate.get('latitude'),
                     longitude=candidate.get('longitude'),
                 )
                 if not results:
+                    logging.info('enrich_ta[%r]: tripadvisor search returned 0', name)
                     return
                 matched = self._gemini_match_tripadvisor_candidate(candidate, results[:10])
                 if not matched:
+                    logging.info(
+                        'enrich_ta[%r]: gemini found no match among %d candidates',
+                        name, len(results),
+                    )
                     return
                 details = self._tripadvisor_details(matched.get('location_id'))
-                candidate['tripadvisor'] = details or matched
+                if details:
+                    candidate['tripadvisor'] = details
+                    logging.info(
+                        'enrich_ta[%r]: matched location_id=%s rating=%s reviews=%s ranking=%s',
+                        name, details.get('location_id'), details.get('rating'),
+                        details.get('review_count'), details.get('ranking'),
+                    )
+                else:
+                    candidate['tripadvisor'] = matched
+                    logging.info(
+                        'enrich_ta[%r]: matched location_id=%s but details fetch failed (no rating)',
+                        name, matched.get('location_id'),
+                    )
             except Exception as exc:
-                logging.warning('Restaurant enrichment failed for %s: %s', candidate.get('name'), exc)
+                logging.warning('enrich_ta[%r]: failed: %s', name, exc)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [executor.submit(work, candidate) for candidate in candidates]
@@ -591,7 +682,7 @@ class PlacesPlugin(Plugin):
                 try:
                     future.result()
                 except Exception as exc:
-                    logging.warning('Restaurant worker failed: %s', exc)
+                    logging.warning('enrich_ta: worker failed: %s', exc)
 
     def _tripadvisor_search(self, query, latitude, longitude):
         params = {
@@ -658,7 +749,10 @@ class PlacesPlugin(Plugin):
         return expanded
 
     def _resolve_cuisine_types(self, query):
-        if not self.gemini_client or not query:
+        if not self.gemini_client:
+            logging.info('resolve_cuisine: no gemini_client, skipping')
+            return []
+        if not query:
             return []
         payload = {
             'user_query': query,
