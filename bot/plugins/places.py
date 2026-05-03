@@ -3,10 +3,15 @@ import os
 import string
 import random
 import html
+import json
+import math
+import concurrent.futures
 from typing import Dict
 from urllib.parse import quote_plus
 
 import requests
+from google import genai
+from google.genai import types
 
 from .plugin import Plugin
 
@@ -15,8 +20,44 @@ PLACES_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText'
 PLACES_NEARBY_URL = 'https://places.googleapis.com/v1/places:searchNearby'
 DIRECTIONS_URL = 'https://maps.googleapis.com/maps/api/directions/json'
 STATIC_MAP_URL = 'https://maps.googleapis.com/maps/api/staticmap'
+GEOCODE_URL = 'https://maps.googleapis.com/maps/api/geocode/json'
+TRIPADVISOR_SEARCH_URL = 'https://api.content.tripadvisor.com/api/v1/location/search'
+TRIPADVISOR_DETAILS_URL = 'https://api.content.tripadvisor.com/api/v1/location/{location_id}/details'
 
 MARKER_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+GOOGLE_LANGUAGE_CODE = 'fr'
+TRIPADVISOR_LANGUAGE = 'fr'
+TRIPADVISOR_ENRICH_LIMIT = 10
+
+RESTAURANT_CUISINE_TYPES = [
+    'french_restaurant', 'italian_restaurant', 'spanish_restaurant',
+    'portuguese_restaurant', 'greek_restaurant', 'mediterranean_restaurant',
+    'tapas_restaurant',
+    'asian_restaurant', 'japanese_restaurant', 'ramen_restaurant',
+    'sushi_restaurant', 'chinese_restaurant', 'cantonese_restaurant',
+    'dim_sum_restaurant', 'vietnamese_restaurant', 'thai_restaurant',
+    'korean_restaurant', 'korean_barbecue_restaurant', 'indian_restaurant',
+    'lebanese_restaurant', 'turkish_restaurant', 'moroccan_restaurant',
+    'persian_restaurant', 'israeli_restaurant', 'middle_eastern_restaurant',
+    'falafel_restaurant', 'shawarma_restaurant',
+    'african_restaurant', 'ethiopian_restaurant',
+    'mexican_restaurant', 'peruvian_restaurant', 'brazilian_restaurant',
+    'argentinian_restaurant',
+    'seafood_restaurant', 'barbecue_restaurant', 'pizza_restaurant',
+    'vegetarian_restaurant', 'vegan_restaurant', 'brunch_restaurant',
+    'fine_dining_restaurant', 'buffet_restaurant',
+    'fast_food_restaurant', 'hamburger_restaurant',
+]
+
+CUISINE_UMBRELLA_EXPANSIONS = {
+    'african_restaurant': ['african_restaurant', 'moroccan_restaurant', 'ethiopian_restaurant'],
+    'asian_restaurant': [
+        'asian_restaurant', 'chinese_restaurant', 'cantonese_restaurant',
+        'dim_sum_restaurant', 'japanese_restaurant', 'ramen_restaurant',
+        'sushi_restaurant', 'korean_restaurant', 'korean_barbecue_restaurant',
+        'thai_restaurant', 'vietnamese_restaurant', 'indian_restaurant',
+    ],
+}
 
 PLACES_FIELD_MASK = ','.join([
     'places.id',
@@ -28,6 +69,7 @@ PLACES_FIELD_MASK = ','.join([
     'places.priceLevel',
     'places.googleMapsUri',
     'places.regularOpeningHours.openNow',
+    'places.primaryType',
     'places.primaryTypeDisplayName',
 ])
 
@@ -41,6 +83,9 @@ class PlacesPlugin(Plugin):
 
     def __init__(self):
         self.api_key = os.environ.get('GOOGLE_MAPS_API_KEY')
+        self.tripadvisor_api_key = os.environ.get('TRIPADVISOR_API_KEY')
+        self.gemini_api_key = os.environ.get('GEMINI_API_KEY')
+        self.gemini_client = genai.Client(api_key=self.gemini_api_key) if self.gemini_api_key else None
 
     def get_source_name(self) -> str:
         return 'Google Maps'
@@ -50,6 +95,49 @@ class PlacesPlugin(Plugin):
 
     def get_spec(self) -> [Dict]:
         return [
+            {
+                'type': 'function',
+                'name': 'search_restaurants',
+                'description': (
+                    'Restaurant discovery near an address or coordinates. Uses Google for retrieval '
+                    'and Tripadvisor as a second rating signal on the top candidates, then returns '
+                    'an already-ranked shortlist with evidence from both sources.\n'
+                    '\n'
+                    'Use this when the user asks for restaurants near a place and wants the best '
+                    'options. For non-restaurant categories (cafes, museums, shops) use search_places '
+                    'or find_nearby_places — they are cheaper and give the same quality.\n'
+                    '\n'
+                    'If the user gave a street, hotel, or landmark, pass address. If they gave '
+                    'coordinates, pass latitude+longitude. After getting results, call present_places '
+                    'to show the selected shortlist with your commentary, propagating google_rating, '
+                    'google_rating_count, tripadvisor_rating, tripadvisor_review_count and '
+                    'tripadvisor_url from each picked place.'
+                ),
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'query': {
+                            'type': 'string',
+                            'description': 'Free-text restaurant query, e.g. "ramen", "bistrot", "italian".',
+                        },
+                        'address': {
+                            'type': 'string',
+                            'description': 'Preferred when the user gave an address, street, hotel, or landmark.',
+                        },
+                        'latitude': {'type': 'number'},
+                        'longitude': {'type': 'number'},
+                        'radius_meters': {
+                            'type': 'number',
+                            'description': 'Search radius in meters. Default 1200.',
+                        },
+                        'max_results': {
+                            'type': 'integer',
+                            'description': 'Max shortlist size to return. Default 12, max 20.',
+                        },
+                    },
+                    'required': ['query'],
+                },
+            },
             {
                 'type': 'function',
                 'name': 'search_places',
@@ -204,6 +292,26 @@ class PlacesPlugin(Plugin):
                                             'Shown right above the map card.'
                                         ),
                                     },
+                                    'google_rating': {
+                                        'type': 'number',
+                                        'description': 'Optional Google rating to render as a separate evidence line.',
+                                    },
+                                    'google_rating_count': {
+                                        'type': 'integer',
+                                        'description': 'Optional Google review count paired with google_rating.',
+                                    },
+                                    'tripadvisor_rating': {
+                                        'type': 'number',
+                                        'description': 'Optional Tripadvisor rating to render as a separate evidence line.',
+                                    },
+                                    'tripadvisor_review_count': {
+                                        'type': 'integer',
+                                        'description': 'Optional Tripadvisor review count paired with tripadvisor_rating.',
+                                    },
+                                    'tripadvisor_url': {
+                                        'type': 'string',
+                                        'description': 'Optional Tripadvisor page URL for the place.',
+                                    },
                                 },
                                 'required': ['name', 'address', 'latitude', 'longitude', 'comment'],
                             },
@@ -284,6 +392,8 @@ class PlacesPlugin(Plugin):
 
         if function_name == 'search_places':
             return self._search_places(**kwargs)
+        if function_name == 'search_restaurants':
+            return self._search_restaurants(**kwargs)
         if function_name == 'find_nearby_places':
             return self._find_nearby_places(**kwargs)
         if function_name == 'present_places':
@@ -297,6 +407,7 @@ class PlacesPlugin(Plugin):
         body = {
             'textQuery': query,
             'maxResultCount': min(int(max_results or 15), 20),
+            'languageCode': GOOGLE_LANGUAGE_CODE,
         }
         if latitude is not None and longitude is not None:
             body['locationBias'] = {
@@ -320,6 +431,7 @@ class PlacesPlugin(Plugin):
         body = {
             'includedTypes': included_types,
             'maxResultCount': min(int(max_results or 15), 20),
+            'languageCode': GOOGLE_LANGUAGE_CODE,
             'locationRestriction': {
                 'circle': {
                     'center': {'latitude': float(latitude), 'longitude': float(longitude)},
@@ -337,6 +449,371 @@ class PlacesPlugin(Plugin):
             return {'error': f'Places API error {r.status_code}', 'details': r.text[:500]}
         return {'places': [self._normalize_place(p) for p in r.json().get('places', [])]}
 
+    def _search_restaurants(
+        self,
+        query,
+        address=None,
+        latitude=None,
+        longitude=None,
+        radius_meters=None,
+        max_results=12,
+        **_,
+    ) -> Dict:
+        if address:
+            geocoded = self._geocode(address)
+            if 'error' in geocoded:
+                return geocoded
+            latitude = geocoded['latitude']
+            longitude = geocoded['longitude']
+            origin_address = geocoded['formatted_address']
+        elif latitude is not None and longitude is not None:
+            latitude = float(latitude)
+            longitude = float(longitude)
+            origin_address = f'{latitude},{longitude}'
+        else:
+            return {'error': 'Either address or latitude+longitude is required'}
+
+        radius_meters = int(radius_meters or 1200)
+        shortlist_size = min(int(max_results or 12), 20)
+
+        cuisine_types = self._resolve_cuisine_types(query)
+        cuisine_types = self._expand_umbrella_cuisines(cuisine_types)
+
+        google_candidates = self._discover_google_candidates(
+            query=query,
+            latitude=latitude,
+            longitude=longitude,
+            radius_meters=radius_meters,
+            cuisine_types=cuisine_types,
+        )
+        if 'error' in google_candidates:
+            return google_candidates
+
+        places = google_candidates['places']
+        for place in places:
+            self._score_google_only(place, radius_meters=radius_meters)
+        places.sort(key=lambda item: item.get('google_score_total', 0), reverse=True)
+
+        self._enrich_restaurants_with_tripadvisor(places[:TRIPADVISOR_ENRICH_LIMIT])
+
+        for place in places:
+            self._finalize_score(place)
+        places.sort(key=lambda item: item.get('final_score', 0), reverse=True)
+
+        return {
+            'origin': {
+                'address': origin_address,
+                'latitude': latitude,
+                'longitude': longitude,
+            },
+            'places': places[:shortlist_size],
+        }
+
+    def _discover_google_candidates(self, query, latitude, longitude, radius_meters, cuisine_types) -> Dict:
+        raw_by_id = {}
+
+        text_result = self._search_places(
+            query=query,
+            latitude=latitude,
+            longitude=longitude,
+            radius_meters=radius_meters,
+            max_results=20,
+        )
+        if 'error' in text_result:
+            return text_result
+        text_places = text_result.get('places', [])
+        if cuisine_types:
+            text_places = [p for p in text_places if self._matches_cuisine(p, cuisine_types)]
+        for place in text_places:
+            place_id = place.get('id')
+            if place_id:
+                raw_by_id.setdefault(place_id, place)
+
+        nearby_types = cuisine_types if cuisine_types else ['restaurant']
+        nearby = self._find_nearby_places(
+            latitude=latitude,
+            longitude=longitude,
+            included_types=nearby_types,
+            radius_meters=radius_meters,
+            max_results=20,
+        )
+        if 'error' in nearby:
+            return nearby
+        for place in nearby.get('places', []):
+            place_id = place.get('id')
+            if place_id:
+                raw_by_id.setdefault(place_id, place)
+
+        places = list(raw_by_id.values())
+        for place in places:
+            place['distance_from_origin_m'] = self._haversine_meters(
+                latitude, longitude, place.get('latitude'), place.get('longitude')
+            )
+            place['tripadvisor'] = None
+
+        return {'places': places}
+
+    @staticmethod
+    def _matches_cuisine(place, cuisine_types):
+        primary = (place.get('primary_type') or '').lower()
+        if primary and primary in cuisine_types:
+            return True
+        category = (place.get('category') or '').lower()
+        if not category:
+            return False
+        cuisine_keywords = {t.replace('_restaurant', '').replace('_', ' ') for t in cuisine_types}
+        return any(keyword and keyword in category for keyword in cuisine_keywords)
+
+    def _enrich_restaurants_with_tripadvisor(self, candidates, concurrency=4):
+        if not self.tripadvisor_api_key or not self.gemini_client or not candidates:
+            return
+
+        def work(candidate):
+            try:
+                results = self._tripadvisor_search(
+                    query=candidate.get('name'),
+                    latitude=candidate.get('latitude'),
+                    longitude=candidate.get('longitude'),
+                )
+                if not results:
+                    return
+                matched = self._gemini_match_tripadvisor_candidate(candidate, results[:10])
+                if not matched:
+                    return
+                details = self._tripadvisor_details(matched.get('location_id'))
+                candidate['tripadvisor'] = details or matched
+            except Exception as exc:
+                logging.warning('Restaurant enrichment failed for %s: %s', candidate.get('name'), exc)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = [executor.submit(work, candidate) for candidate in candidates]
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    future.result()
+                except Exception as exc:
+                    logging.warning('Restaurant worker failed: %s', exc)
+
+    def _tripadvisor_search(self, query, latitude, longitude):
+        params = {
+            'key': self.tripadvisor_api_key,
+            'searchQuery': query,
+            'category': 'restaurants',
+            'latLong': f'{latitude},{longitude}',
+            'language': TRIPADVISOR_LANGUAGE,
+        }
+        r = requests.get(TRIPADVISOR_SEARCH_URL, params=params, timeout=20)
+        if r.status_code != 200:
+            logging.warning('Tripadvisor search failed: %s %s', r.status_code, r.text[:300])
+            return []
+        items = []
+        for item in r.json().get('data', [])[:10]:
+            address_obj = item.get('address_obj') or {}
+            items.append({
+                'location_id': str(item.get('location_id') or ''),
+                'name': item.get('name') or '',
+                'address': address_obj.get('address_string') or '',
+                'latitude': item.get('latitude'),
+                'longitude': item.get('longitude'),
+            })
+        return items
+
+    def _tripadvisor_details(self, location_id):
+        r = requests.get(
+            TRIPADVISOR_DETAILS_URL.format(location_id=location_id),
+            params={'key': self.tripadvisor_api_key, 'language': TRIPADVISOR_LANGUAGE},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            logging.warning('Tripadvisor details failed: %s %s', r.status_code, r.text[:300])
+            return None
+        payload = r.json()
+        address_obj = payload.get('address_obj') or {}
+        ranking_data = payload.get('ranking_data') or {}
+        ranking = ranking_data.get('ranking')
+        try:
+            ranking = int(ranking) if ranking else None
+        except ValueError:
+            ranking = None
+        return {
+            'location_id': str(payload.get('location_id') or location_id),
+            'name': payload.get('name') or '',
+            'address': address_obj.get('address_string') or '',
+            'rating': self._to_float(payload.get('rating')),
+            'review_count': self._to_int(payload.get('num_reviews')),
+            'ranking': ranking,
+            'web_url': payload.get('web_url'),
+        }
+
+    @staticmethod
+    def _expand_umbrella_cuisines(cuisine_types):
+        if not cuisine_types:
+            return []
+        expanded = []
+        seen = set()
+        for t in cuisine_types:
+            for sub in CUISINE_UMBRELLA_EXPANSIONS.get(t, [t]):
+                if sub not in seen:
+                    seen.add(sub)
+                    expanded.append(sub)
+        return expanded
+
+    def _resolve_cuisine_types(self, query):
+        if not self.gemini_client or not query:
+            return []
+        payload = {
+            'user_query': query,
+            'allowed_types': RESTAURANT_CUISINE_TYPES,
+            'task': (
+                'Pick the Google Places restaurant types that best match the cuisine or format '
+                'the user asked for. Choose only types from allowed_types. '
+                'If the user did not specify a cuisine or format (e.g. "best restaurants near me", '
+                '"где поесть рядом"), return an empty array. '
+                'If the user named a cuisine that is not in allowed_types (e.g. Georgian, Uzbek), '
+                'return an empty array — do not substitute a different cuisine. '
+                'Return strict JSON only.'
+            ),
+            'output_schema': {
+                'types': 'array of strings from allowed_types, or empty array',
+            },
+        }
+        try:
+            response = self.gemini_client.models.generate_content(
+                model='gemini-3.1-flash-lite-preview',
+                contents=json.dumps(payload, ensure_ascii=False),
+                config=types.GenerateContentConfig(
+                    response_mime_type='application/json',
+                    temperature=0,
+                ),
+            )
+        except Exception as exc:
+            logging.warning('Cuisine resolution failed: %s', exc)
+            return []
+        text = getattr(response, 'text', '') or ''
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+        types_list = parsed.get('types') or []
+        allowed = set(RESTAURANT_CUISINE_TYPES)
+        return [t for t in types_list if isinstance(t, str) and t in allowed]
+
+    def _gemini_match_tripadvisor_candidate(self, google_place, tripadvisor_candidates):
+        payload = {
+            'google_place': {
+                'name': google_place.get('name'),
+                'address': google_place.get('address'),
+                'latitude': google_place.get('latitude'),
+                'longitude': google_place.get('longitude'),
+                'google_type': google_place.get('category'),
+            },
+            'tripadvisor_candidates': tripadvisor_candidates[:10],
+            'task': (
+                'Decide whether any Tripadvisor candidate is the same physical place as the Google place. '
+                'Choose exactly one Tripadvisor candidate if there is a strong match, otherwise choose null. '
+                'Prefer exact address and location over exact name wording. Return strict JSON only.'
+            ),
+            'output_schema': {
+                'matched_location_id': 'string or null',
+                'confidence': 'number 0..1',
+            },
+        }
+        response = self.gemini_client.models.generate_content(
+            model='gemini-3.1-flash-lite-preview',
+            contents=json.dumps(payload, ensure_ascii=False),
+            config=types.GenerateContentConfig(
+                response_mime_type='application/json',
+                temperature=0,
+            ),
+        )
+        text = getattr(response, 'text', '') or ''
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        location_id = str(parsed.get('matched_location_id') or '')
+        confidence = float(parsed.get('confidence') or 0)
+        if not location_id or confidence < 0.7:
+            return None
+        return next((item for item in tripadvisor_candidates if item.get('location_id') == location_id), None)
+
+    def _score_google_only(self, place, radius_meters):
+        distance = place.get('distance_from_origin_m') or radius_meters
+        geo_score = max(0.0, 1.0 - min(distance, radius_meters) / radius_meters) * 0.20
+        google_rating = self._to_float(place.get('rating')) or 0.0
+        google_count = self._to_int(place.get('rating_count')) or 0
+        google_score = (google_rating / 5.0) * 0.25
+        google_confidence = min(math.log10(google_count + 1) / 4.0, 1.0) * 0.15
+        place['google_score_total'] = round(geo_score + google_score + google_confidence, 4)
+
+    def _finalize_score(self, place):
+        base = place.get('google_score_total', 0.0)
+        ta = place.get('tripadvisor')
+        if not ta or ta.get('rating') is None:
+            place['final_score'] = base
+            return
+        google_rating = self._to_float(place.get('rating')) or 0.0
+        ta_rating = self._to_float(ta.get('rating')) or 0.0
+        ta_reviews = self._to_int(ta.get('review_count')) or 0
+        ta_score = (ta_rating / 5.0) * 0.24
+        ta_score += min(math.log10(ta_reviews + 1) / 4.0, 1.0) * 0.12
+        if ta.get('ranking') and ta['ranking'] <= 500:
+            ta_score += 0.08
+        if google_rating and ta_rating and google_rating - ta_rating >= 0.7:
+            ta_score -= 0.10
+        place['final_score'] = round(base + ta_score, 4)
+
+    def _geocode(self, address):
+        r = requests.get(
+            GEOCODE_URL,
+            params={'address': address, 'language': GOOGLE_LANGUAGE_CODE, 'key': self.api_key},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return {'error': f'Geocode error {r.status_code}', 'details': r.text[:500]}
+        payload = r.json()
+        if payload.get('status') != 'OK' or not payload.get('results'):
+            return {'error': f'Geocode status {payload.get("status")}'}
+        result = payload['results'][0]
+        location = result['geometry']['location']
+        return {
+            'formatted_address': result.get('formatted_address'),
+            'latitude': location.get('lat'),
+            'longitude': location.get('lng'),
+        }
+
+    @staticmethod
+    def _haversine_meters(lat1, lng1, lat2, lng2):
+        if None in (lat1, lng1, lat2, lng2):
+            return None
+        radius = 6371000.0
+        phi1 = math.radians(float(lat1))
+        phi2 = math.radians(float(lat2))
+        d_phi = math.radians(float(lat2) - float(lat1))
+        d_lambda = math.radians(float(lng2) - float(lng1))
+        a = (
+            math.sin(d_phi / 2) ** 2
+            + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+        )
+        return round(2 * radius * math.atan2(math.sqrt(a), math.sqrt(1 - a)), 1)
+
+    @staticmethod
+    def _to_float(value):
+        if value in (None, ''):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _to_int(value):
+        if value in (None, ''):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     def _normalize_place(self, p: Dict) -> Dict:
         loc = p.get('location') or {}
         name = (p.get('displayName') or {}).get('text')
@@ -352,6 +829,7 @@ class PlacesPlugin(Plugin):
             'rating_count': p.get('userRatingCount'),
             'price_level': p.get('priceLevel'),
             'category': primary,
+            'primary_type': p.get('primaryType'),
             'open_now': opening.get('openNow'),
             'maps_url': p.get('googleMapsUri'),
         }
@@ -378,6 +856,11 @@ class PlacesPlugin(Plugin):
             name = place.get('name') or ''
             comment = (place.get('comment') or '').strip()
             address = (place.get('address') or '').strip()
+            google_rating = self._to_float(place.get('google_rating'))
+            google_rating_count = self._to_int(place.get('google_rating_count'))
+            tripadvisor_rating = self._to_float(place.get('tripadvisor_rating'))
+            tripadvisor_review_count = self._to_int(place.get('tripadvisor_review_count'))
+            tripadvisor_url = (place.get('tripadvisor_url') or '').strip()
             lat = float(place['latitude'])
             lng = float(place['longitude'])
             maps_url = place.get('maps_url') or f'https://www.google.com/maps/search/?api=1&query={lat},{lng}'
@@ -391,6 +874,24 @@ class PlacesPlugin(Plugin):
             line = f'{label}. {link}'
             if safe_address:
                 line += f' - {safe_address}'
+            evidence_lines = []
+            if google_rating is not None:
+                google_text = f'Google: {google_rating:.1f}'
+                if google_rating_count is not None:
+                    google_text += f' ({google_rating_count})'
+                evidence_lines.append(self._html_escape(google_text))
+            if tripadvisor_rating is not None:
+                ta_text = f'Tripadvisor: {tripadvisor_rating:.1f}'
+                if tripadvisor_review_count is not None:
+                    ta_text += f' ({tripadvisor_review_count})'
+                if tripadvisor_url:
+                    safe_ta_url = html.escape(tripadvisor_url, quote=True)
+                    ta_text = f'<a href="{safe_ta_url}">{self._html_escape(ta_text)}</a>'
+                else:
+                    ta_text = self._html_escape(ta_text)
+                evidence_lines.append(ta_text)
+            if evidence_lines:
+                line += '\n   ' + '\n   '.join(evidence_lines)
             if comment:
                 line += f'\n   {safe_comment}'
             lines.append(line)
