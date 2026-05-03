@@ -1105,15 +1105,26 @@ class PlacesPlugin(Plugin):
             maps_url = place.get('maps_url') or f'https://www.google.com/maps/search/?api=1&query={lat},{lng}'
 
             safe_name = self._html_escape(name)
-            safe_address = self._html_escape(address)
+            short_address = self._short_place_address(address)
+            safe_address = self._html_escape(short_address)
             safe_comment = self._html_escape(comment)
             safe_maps_url = html.escape(maps_url, quote=True)
             link = f'<a href="{safe_maps_url}">{safe_name}</a>'
 
-            line = f'{label}. {link}'
-            if safe_address:
-                line += f' - {safe_address}'
+            title_parts = [f'<b>{label}.</b> {link}']
+            if price_level:
+                title_parts.append(self._html_escape(price_level))
+            line = ' · '.join(title_parts)
+
             evidence_lines = []
+            address_distance_parts = []
+            if distance_meters is not None:
+                address_distance_parts.append(self._html_escape(self._format_distance(distance_meters)))
+            if safe_address:
+                address_distance_parts.append(safe_address)
+            if address_distance_parts:
+                evidence_lines.append(' · '.join(address_distance_parts))
+
             rating_parts = []
             if google_rating is not None:
                 google_text = f'Google: {google_rating:.1f}'
@@ -1131,15 +1142,7 @@ class PlacesPlugin(Plugin):
                     ta_text = self._html_escape(ta_text)
                 rating_parts.append(ta_text)
             if rating_parts:
-                evidence_lines.append(', '.join(rating_parts))
-
-            meta_parts = []
-            if distance_meters is not None:
-                meta_parts.append(self._html_escape(self._format_distance(distance_meters)))
-            if price_level:
-                meta_parts.insert(0, self._html_escape(price_level))
-            if meta_parts:
-                evidence_lines.append(', '.join(meta_parts))
+                evidence_lines.append(' · '.join(rating_parts))
 
             service_flags = []
             if delivery:
@@ -1149,9 +1152,9 @@ class PlacesPlugin(Plugin):
             if service_flags:
                 evidence_lines.append(self._html_escape(' · '.join(service_flags)))
             if evidence_lines:
-                line += '\n   ' + '\n   '.join(evidence_lines)
+                line += '\n' + '\n'.join(evidence_lines)
             if comment:
-                line += f'\n   {safe_comment}'
+                line += f'\n{safe_comment}'
             lines.append(line)
 
             marker_params.append(f'markers=color:red%7Clabel:{label}%7C{lat},{lng}')
@@ -1312,6 +1315,12 @@ class PlacesPlugin(Plugin):
         if meters >= 1000:
             return f'{meters / 1000:.1f} km'
         return f'{int(meters)} m'
+
+    @staticmethod
+    def _short_place_address(address: str) -> str:
+        if not address:
+            return ''
+        return address.split(',', 1)[0].strip()
 
     @staticmethod
     def _format_google_price_level(value) -> str:
