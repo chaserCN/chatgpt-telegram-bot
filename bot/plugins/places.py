@@ -564,11 +564,11 @@ class PlacesPlugin(Plugin):
             ta_matched, len(prescore_top), ta_with_rating, len(prescore_top),
         )
 
-        for place in places:
+        for place in prescore_top:
             self._finalize_score(place)
-        places.sort(key=self._restaurant_final_sort_key)
+        prescore_top.sort(key=self._restaurant_final_sort_key)
 
-        final_places = places[:shortlist_size]
+        final_places = prescore_top[:shortlist_size]
         for place in final_places:
             self._flatten_place_for_presentation(place)
         logging.info(
