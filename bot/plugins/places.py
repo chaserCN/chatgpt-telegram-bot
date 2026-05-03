@@ -947,7 +947,7 @@ class PlacesPlugin(Plugin):
                 'latitude': place.get('latitude'),
                 'longitude': place.get('longitude'),
                 'maps_url': place.get('maps_url'),
-                'comment': self._restaurant_comment(place),
+                'comment': '',
                 'google_rating': place.get('google_rating'),
                 'google_rating_count': place.get('google_rating_count'),
                 'tripadvisor_rating': place.get('tripadvisor_rating'),
@@ -966,28 +966,6 @@ class PlacesPlugin(Plugin):
         if not origin_address:
             return ''
         return f'Found {count} options for {query} near {origin_address}.'
-
-    def _restaurant_comment(self, place):
-        parts = []
-        distance_meters = self._to_int(place.get('distance_meters'))
-        if distance_meters is not None:
-            if distance_meters <= 250:
-                parts.append('Very close to the requested point.')
-            elif distance_meters <= 600:
-                parts.append('Still comfortably walkable from the requested point.')
-        ta = place.get('tripadvisor') or {}
-        ta_rating = self._to_float(ta.get('rating'))
-        ta_reviews = self._to_int(ta.get('review_count')) or 0
-        google_rating = self._to_float(place.get('google_rating'))
-        if ta_rating is not None and ta_reviews >= 100:
-            parts.append('Tripadvisor coverage is strong here, so the cross-check is meaningful.')
-        if google_rating and ta_rating and google_rating - ta_rating >= 0.7:
-            parts.append('Google is much warmer than Tripadvisor, so this one looks more divisive.')
-        elif google_rating and ta_rating and abs(google_rating - ta_rating) <= 0.3:
-            parts.append('Google and Tripadvisor broadly agree on this one.')
-        if not parts:
-            parts.append('Looks like a solid option based on the available signals.')
-        return ' '.join(parts)
 
     @staticmethod
     def _restaurant_prescore_sort_key(place):
@@ -1136,11 +1114,12 @@ class PlacesPlugin(Plugin):
             if safe_address:
                 line += f' - {safe_address}'
             evidence_lines = []
+            rating_parts = []
             if google_rating is not None:
                 google_text = f'Google: {google_rating:.1f}'
                 if google_rating_count is not None:
                     google_text += f' ({google_rating_count})'
-                evidence_lines.append(self._html_escape(google_text))
+                rating_parts.append(self._html_escape(google_text))
             if tripadvisor_rating is not None:
                 ta_text = f'Tripadvisor: {tripadvisor_rating:.1f}'
                 if tripadvisor_review_count is not None:
@@ -1150,18 +1129,23 @@ class PlacesPlugin(Plugin):
                     ta_text = f'<a href="{safe_ta_url}">{self._html_escape(ta_text)}</a>'
                 else:
                     ta_text = self._html_escape(ta_text)
-                evidence_lines.append(ta_text)
+                rating_parts.append(ta_text)
+            if rating_parts:
+                evidence_lines.append(', '.join(rating_parts))
+
+            meta_parts = []
             if distance_meters is not None:
-                evidence_lines.append(self._html_escape(f'Distance: {self._format_distance(distance_meters)}'))
+                meta_parts.append(self._html_escape(self._format_distance(distance_meters)))
             if price_level:
-                evidence_lines.append(self._html_escape(f'Price: {price_level}'))
+                meta_parts.insert(0, self._html_escape(price_level))
+            if meta_parts:
+                evidence_lines.append(', '.join(meta_parts))
+
             service_flags = []
             if delivery:
-                service_flags.append('Delivery')
+                service_flags.append('Доставка')
             if takeout:
-                service_flags.append('Takeout')
-            if dine_in:
-                service_flags.append('Dine-in')
+                service_flags.append('Навынос')
             if service_flags:
                 evidence_lines.append(self._html_escape(' · '.join(service_flags)))
             if evidence_lines:
