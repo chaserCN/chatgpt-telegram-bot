@@ -84,6 +84,7 @@ class PlacesPlugin(Plugin):
     def __init__(self):
         self.api_key = os.environ.get('GOOGLE_MAPS_API_KEY')
         self.tripadvisor_api_key = os.environ.get('TRIPADVISOR_API_KEY')
+        self.tripadvisor_allowed_domain = os.environ.get('TRIPADVISOR_ALLOWED_DOMAIN')
         self.gemini_api_key = os.environ.get('GEMINI_API_KEY')
         self.gemini_client = genai.Client(api_key=self.gemini_api_key) if self.gemini_api_key else None
 
@@ -701,7 +702,12 @@ class PlacesPlugin(Plugin):
             'latLong': f'{latitude},{longitude}',
             'language': TRIPADVISOR_LANGUAGE,
         }
-        r = requests.get(TRIPADVISOR_SEARCH_URL, params=params, timeout=20)
+        r = requests.get(
+            TRIPADVISOR_SEARCH_URL,
+            params=params,
+            headers=self._tripadvisor_headers(),
+            timeout=20,
+        )
         if r.status_code != 200:
             logging.warning('Tripadvisor search failed: %s %s', r.status_code, r.text[:300])
             return []
@@ -721,6 +727,7 @@ class PlacesPlugin(Plugin):
         r = requests.get(
             TRIPADVISOR_DETAILS_URL.format(location_id=location_id),
             params={'key': self.tripadvisor_api_key, 'language': TRIPADVISOR_LANGUAGE},
+            headers=self._tripadvisor_headers(),
             timeout=20,
         )
         if r.status_code != 200:
@@ -742,6 +749,19 @@ class PlacesPlugin(Plugin):
             'review_count': self._to_int(payload.get('num_reviews')),
             'ranking': ranking,
             'web_url': payload.get('web_url'),
+        }
+
+    def _tripadvisor_headers(self):
+        if not self.tripadvisor_allowed_domain:
+            return {'accept': 'application/json'}
+        domain = self.tripadvisor_allowed_domain.strip()
+        if not domain:
+            return {'accept': 'application/json'}
+        origin = domain if domain.startswith('http://') or domain.startswith('https://') else f'https://{domain}'
+        return {
+            'accept': 'application/json',
+            'origin': origin,
+            'referer': f'{origin}/',
         }
 
     @staticmethod
