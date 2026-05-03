@@ -27,7 +27,7 @@ TRIPADVISOR_DETAILS_URL = 'https://api.content.tripadvisor.com/api/v1/location/{
 MARKER_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 GOOGLE_LANGUAGE_CODE = 'fr'
 TRIPADVISOR_LANGUAGE = 'fr'
-TRIPADVISOR_ENRICH_LIMIT = 10
+TRIPADVISOR_ENRICH_LIMIT = 15
 
 RESTAURANT_CUISINE_TYPES = [
     'french_restaurant', 'italian_restaurant', 'spanish_restaurant',
@@ -67,6 +67,9 @@ PLACES_FIELD_MASK = ','.join([
     'places.rating',
     'places.userRatingCount',
     'places.priceLevel',
+    'places.delivery',
+    'places.takeout',
+    'places.dineIn',
     'places.googleMapsUri',
     'places.regularOpeningHours.openNow',
     'places.primaryType',
@@ -114,10 +117,12 @@ class PlacesPlugin(Plugin):
                     'For non-restaurant categories (cafes, museums, shops) use search_places or '
                     'find_nearby_places — they are cheaper and give the same quality.\n'
                     '\n'
-                    'After getting results, call present_places to show the selected shortlist with '
-                    'your commentary, propagating google_rating, google_rating_count, '
-                    'tripadvisor_rating, tripadvisor_review_count and tripadvisor_url from each '
-                    'picked place.'
+                    'This tool already renders the shortlist to the user with a map and cards. '
+                    'Do NOT call present_places after search_restaurants.\n'
+                    '\n'
+                    'For browsing requests, prefer max_results=12 so the server-side ranker has '
+                    'room to show a meaningful shortlist. Use smaller values only if the user '
+                    'explicitly asked for a very short list.'
                 ),
                 'parameters': {
                     'type': 'object',
@@ -322,6 +327,26 @@ class PlacesPlugin(Plugin):
                                         'type': 'string',
                                         'description': 'Optional Tripadvisor page URL for the place.',
                                     },
+                                    'distance_meters': {
+                                        'type': 'number',
+                                        'description': 'Optional distance from the requested point in meters.',
+                                    },
+                                    'price_level': {
+                                        'type': 'string',
+                                        'description': 'Optional unified price string, e.g. "$$ - $$$" or "$$".',
+                                    },
+                                    'delivery': {
+                                        'type': 'boolean',
+                                        'description': 'Optional whether delivery is available.',
+                                    },
+                                    'takeout': {
+                                        'type': 'boolean',
+                                        'description': 'Optional whether takeaway / takeout is available.',
+                                    },
+                                    'dine_in': {
+                                        'type': 'boolean',
+                                        'description': 'Optional whether dine-in / sit-down service is available.',
+                                    },
                                 },
                                 'required': ['name', 'address', 'latitude', 'longitude', 'comment'],
                             },
@@ -518,7 +543,7 @@ class PlacesPlugin(Plugin):
 
         for place in places:
             self._score_google_only(place, radius_meters=radius_meters)
-        places.sort(key=lambda item: item.get('google_score_total', 0), reverse=True)
+        places.sort(key=self._restaurant_prescore_sort_key)
 
         prescore_top = places[:TRIPADVISOR_ENRICH_LIMIT]
         logging.info(
@@ -541,9 +566,11 @@ class PlacesPlugin(Plugin):
 
         for place in places:
             self._finalize_score(place)
-        places.sort(key=lambda item: item.get('final_score', 0), reverse=True)
+        places.sort(key=self._restaurant_final_sort_key)
 
         final_places = places[:shortlist_size]
+        for place in final_places:
+            self._flatten_place_for_presentation(place)
         logging.info(
             'search_restaurants: returning %d places (shortlist=%d). Top: %s',
             len(final_places), shortlist_size,
@@ -566,6 +593,10 @@ class PlacesPlugin(Plugin):
                 'longitude': longitude,
             },
             'places': final_places,
+            'direct_result': self._present_places(
+                places=self._restaurant_places_for_render(final_places),
+                intro=self._restaurant_intro(query, origin_address, len(final_places)),
+            )['direct_result'],
         }
 
     def _discover_google_candidates(self, query, latitude, longitude, radius_meters, cuisine_types) -> Dict:
@@ -749,6 +780,10 @@ class PlacesPlugin(Plugin):
             'review_count': self._to_int(payload.get('num_reviews')),
             'ranking': ranking,
             'web_url': payload.get('web_url'),
+            'price_level': payload.get('price_level'),
+            'delivery': self._tripadvisor_feature_present(payload.get('features'), 'Delivery'),
+            'takeout': self._tripadvisor_feature_present(payload.get('features'), 'Takeout'),
+            'dine_in': self._tripadvisor_feature_present(payload.get('subcategory'), 'Sit down', localized=True),
         }
 
     def _tripadvisor_headers(self):
@@ -860,13 +895,11 @@ class PlacesPlugin(Plugin):
         return next((item for item in tripadvisor_candidates if item.get('location_id') == location_id), None)
 
     def _score_google_only(self, place, radius_meters):
-        distance = place.get('distance_from_origin_m') or radius_meters
-        geo_score = max(0.0, 1.0 - min(distance, radius_meters) / radius_meters) * 0.20
         google_rating = self._to_float(place.get('rating')) or 0.0
         google_count = self._to_int(place.get('rating_count')) or 0
         google_score = (google_rating / 5.0) * 0.25
         google_confidence = min(math.log10(google_count + 1) / 4.0, 1.0) * 0.15
-        place['google_score_total'] = round(geo_score + google_score + google_confidence, 4)
+        place['google_score_total'] = round(google_score + google_confidence, 4)
 
     def _finalize_score(self, place):
         base = place.get('google_score_total', 0.0)
@@ -884,6 +917,103 @@ class PlacesPlugin(Plugin):
         if google_rating and ta_rating and google_rating - ta_rating >= 0.7:
             ta_score -= 0.10
         place['final_score'] = round(base + ta_score, 4)
+
+    def _flatten_place_for_presentation(self, place):
+        ta = place.get('tripadvisor') or {}
+        place['distance_meters'] = self._to_int(round(place.get('distance_from_origin_m'))) if place.get('distance_from_origin_m') is not None else None
+        place['google_rating'] = self._to_float(place.get('rating'))
+        place['google_rating_count'] = self._to_int(place.get('rating_count'))
+        place['tripadvisor_rating'] = self._to_float(ta.get('rating'))
+        place['tripadvisor_review_count'] = self._to_int(ta.get('review_count'))
+        place['tripadvisor_url'] = ta.get('web_url')
+
+        google_price = self._format_google_price_level(place.get('price_level'))
+        tripadvisor_price = ta.get('price_level')
+        place['price_level'] = tripadvisor_price or google_price
+
+        google_delivery = place.get('delivery')
+        google_takeout = place.get('takeout')
+        google_dine_in = place.get('dine_in')
+        place['delivery'] = google_delivery if google_delivery is not None else ta.get('delivery')
+        place['takeout'] = google_takeout if google_takeout is not None else ta.get('takeout')
+        place['dine_in'] = google_dine_in if google_dine_in is not None else ta.get('dine_in')
+
+    def _restaurant_places_for_render(self, places):
+        rendered = []
+        for place in places:
+            rendered.append({
+                'name': place.get('name'),
+                'address': place.get('address'),
+                'latitude': place.get('latitude'),
+                'longitude': place.get('longitude'),
+                'maps_url': place.get('maps_url'),
+                'comment': self._restaurant_comment(place),
+                'google_rating': place.get('google_rating'),
+                'google_rating_count': place.get('google_rating_count'),
+                'tripadvisor_rating': place.get('tripadvisor_rating'),
+                'tripadvisor_review_count': place.get('tripadvisor_review_count'),
+                'tripadvisor_url': place.get('tripadvisor_url'),
+                'distance_meters': place.get('distance_meters'),
+                'price_level': place.get('price_level'),
+                'delivery': place.get('delivery'),
+                'takeout': place.get('takeout'),
+                'dine_in': place.get('dine_in'),
+            })
+        return rendered
+
+    @staticmethod
+    def _restaurant_intro(query, origin_address, count):
+        if not origin_address:
+            return ''
+        return f'Found {count} options for {query} near {origin_address}.'
+
+    def _restaurant_comment(self, place):
+        parts = []
+        distance_meters = self._to_int(place.get('distance_meters'))
+        if distance_meters is not None:
+            if distance_meters <= 250:
+                parts.append('Very close to the requested point.')
+            elif distance_meters <= 600:
+                parts.append('Still comfortably walkable from the requested point.')
+        ta = place.get('tripadvisor') or {}
+        ta_rating = self._to_float(ta.get('rating'))
+        ta_reviews = self._to_int(ta.get('review_count')) or 0
+        google_rating = self._to_float(place.get('google_rating'))
+        if ta_rating is not None and ta_reviews >= 100:
+            parts.append('Tripadvisor coverage is strong here, so the cross-check is meaningful.')
+        if google_rating and ta_rating and google_rating - ta_rating >= 0.7:
+            parts.append('Google is much warmer than Tripadvisor, so this one looks more divisive.')
+        elif google_rating and ta_rating and abs(google_rating - ta_rating) <= 0.3:
+            parts.append('Google and Tripadvisor broadly agree on this one.')
+        if not parts:
+            parts.append('Looks like a solid option based on the available signals.')
+        return ' '.join(parts)
+
+    @staticmethod
+    def _restaurant_prescore_sort_key(place):
+        return (
+            -(place.get('google_score_total') or 0.0),
+            -(PlacesPlugin._to_int(place.get('rating_count')) or 0),
+            -(PlacesPlugin._to_float(place.get('rating')) or 0.0),
+            place.get('distance_from_origin_m') if place.get('distance_from_origin_m') is not None else 10**9,
+            (place.get('name') or '').casefold(),
+            place.get('id') or '',
+        )
+
+    @staticmethod
+    def _restaurant_final_sort_key(place):
+        ta = place.get('tripadvisor') or {}
+        return (
+            place.get('distance_from_origin_m') if place.get('distance_from_origin_m') is not None else 10**9,
+            -(place.get('final_score') or 0.0),
+            -int(bool(ta and ta.get('rating') is not None)),
+            -(PlacesPlugin._to_int(place.get('rating_count')) or 0),
+            -(PlacesPlugin._to_float(place.get('rating')) or 0.0),
+            -(PlacesPlugin._to_int(ta.get('review_count')) or 0),
+            -(PlacesPlugin._to_float(ta.get('rating')) or 0.0),
+            (place.get('name') or '').casefold(),
+            place.get('id') or '',
+        )
 
     def _geocode(self, address):
         r = requests.get(
@@ -954,6 +1084,9 @@ class PlacesPlugin(Plugin):
             'category': primary,
             'primary_type': p.get('primaryType'),
             'open_now': opening.get('openNow'),
+            'delivery': p.get('delivery'),
+            'takeout': p.get('takeout'),
+            'dine_in': p.get('dineIn'),
             'maps_url': p.get('googleMapsUri'),
         }
 
@@ -984,6 +1117,11 @@ class PlacesPlugin(Plugin):
             tripadvisor_rating = self._to_float(place.get('tripadvisor_rating'))
             tripadvisor_review_count = self._to_int(place.get('tripadvisor_review_count'))
             tripadvisor_url = (place.get('tripadvisor_url') or '').strip()
+            distance_meters = self._to_int(place.get('distance_meters'))
+            price_level = (place.get('price_level') or '').strip()
+            delivery = place.get('delivery')
+            takeout = place.get('takeout')
+            dine_in = place.get('dine_in')
             lat = float(place['latitude'])
             lng = float(place['longitude'])
             maps_url = place.get('maps_url') or f'https://www.google.com/maps/search/?api=1&query={lat},{lng}'
@@ -1013,6 +1151,19 @@ class PlacesPlugin(Plugin):
                 else:
                     ta_text = self._html_escape(ta_text)
                 evidence_lines.append(ta_text)
+            if distance_meters is not None:
+                evidence_lines.append(self._html_escape(f'Distance: {self._format_distance(distance_meters)}'))
+            if price_level:
+                evidence_lines.append(self._html_escape(f'Price: {price_level}'))
+            service_flags = []
+            if delivery:
+                service_flags.append('Delivery')
+            if takeout:
+                service_flags.append('Takeout')
+            if dine_in:
+                service_flags.append('Dine-in')
+            if service_flags:
+                evidence_lines.append(self._html_escape(' · '.join(service_flags)))
             if evidence_lines:
                 line += '\n   ' + '\n   '.join(evidence_lines)
             if comment:
@@ -1177,6 +1328,28 @@ class PlacesPlugin(Plugin):
         if meters >= 1000:
             return f'{meters / 1000:.1f} km'
         return f'{int(meters)} m'
+
+    @staticmethod
+    def _format_google_price_level(value) -> str:
+        mapping = {
+            'PRICE_LEVEL_FREE': 'Free',
+            'PRICE_LEVEL_INEXPENSIVE': '$',
+            'PRICE_LEVEL_MODERATE': '$$',
+            'PRICE_LEVEL_EXPENSIVE': '$$$',
+            'PRICE_LEVEL_VERY_EXPENSIVE': '$$$$',
+        }
+        return mapping.get(value, '') if value else ''
+
+    @staticmethod
+    def _tripadvisor_feature_present(features, expected, localized=False) -> bool:
+        if not features:
+            return False
+        if localized:
+            for item in features:
+                if isinstance(item, dict) and (item.get('localized_name') == expected or item.get('name') == expected):
+                    return True
+            return False
+        return any(str(item).strip().lower() == expected.lower() for item in features if item)
 
     @staticmethod
     def _format_duration(seconds: int) -> str:
