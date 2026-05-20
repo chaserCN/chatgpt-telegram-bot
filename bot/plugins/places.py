@@ -456,6 +456,22 @@ class PlacesPlugin(Plugin):
             'X-Goog-Api-Key': self.api_key,
             'X-Goog-FieldMask': PLACES_FIELD_MASK,
         }
+        logging.info(
+            'Google Places searchText request params=%s',
+            json.dumps(
+                {
+                    'url': PLACES_SEARCH_URL,
+                    'json': body,
+                    'headers': {
+                        'Content-Type': headers['Content-Type'],
+                        'X-Goog-Api-Key': '<redacted>',
+                        'X-Goog-FieldMask': headers['X-Goog-FieldMask'],
+                    },
+                    'timeout': 15,
+                },
+                ensure_ascii=False,
+            ),
+        )
         r = requests.post(PLACES_SEARCH_URL, json=body, headers=headers, timeout=15)
         if r.status_code != 200:
             return {'error': f'Places API error {r.status_code}', 'details': r.text[:500]}
@@ -479,6 +495,22 @@ class PlacesPlugin(Plugin):
             'X-Goog-Api-Key': self.api_key,
             'X-Goog-FieldMask': PLACES_FIELD_MASK,
         }
+        logging.info(
+            'Google Places searchNearby request params=%s',
+            json.dumps(
+                {
+                    'url': PLACES_NEARBY_URL,
+                    'json': body,
+                    'headers': {
+                        'Content-Type': headers['Content-Type'],
+                        'X-Goog-Api-Key': '<redacted>',
+                        'X-Goog-FieldMask': headers['X-Goog-FieldMask'],
+                    },
+                    'timeout': 15,
+                },
+                ensure_ascii=False,
+            ),
+        )
         r = requests.post(PLACES_NEARBY_URL, json=body, headers=headers, timeout=15)
         if r.status_code != 200:
             return {'error': f'Places API error {r.status_code}', 'details': r.text[:500]}
@@ -835,6 +867,20 @@ class PlacesPlugin(Plugin):
             },
         }
         try:
+            logging.info(
+                'resolve_cuisine: Gemini request params=%s',
+                json.dumps(
+                    {
+                        'model': 'gemini-3.1-flash-lite-preview',
+                        'contents': payload,
+                        'config': {
+                            'response_mime_type': 'application/json',
+                            'temperature': 0,
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            )
             response = self.gemini_client.models.generate_content(
                 model='gemini-3.1-flash-lite-preview',
                 contents=json.dumps(payload, ensure_ascii=False),
@@ -875,6 +921,20 @@ class PlacesPlugin(Plugin):
                 'confidence': 'number 0..1',
             },
         }
+        logging.info(
+            'tripadvisor_match: Gemini request params=%s',
+            json.dumps(
+                {
+                    'model': 'gemini-3.1-flash-lite-preview',
+                    'contents': payload,
+                    'config': {
+                        'response_mime_type': 'application/json',
+                        'temperature': 0,
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        )
         response = self.gemini_client.models.generate_content(
             model='gemini-3.1-flash-lite-preview',
             contents=json.dumps(payload, ensure_ascii=False),
@@ -994,9 +1054,21 @@ class PlacesPlugin(Plugin):
         )
 
     def _geocode(self, address):
+        params = {'address': address, 'language': GOOGLE_LANGUAGE_CODE, 'key': self.api_key}
+        logging.info(
+            'Google Geocode request params=%s',
+            json.dumps(
+                {
+                    'url': GEOCODE_URL,
+                    'params': {**params, 'key': '<redacted>'},
+                    'timeout': 15,
+                },
+                ensure_ascii=False,
+            ),
+        )
         r = requests.get(
             GEOCODE_URL,
-            params={'address': address, 'language': GOOGLE_LANGUAGE_CODE, 'key': self.api_key},
+            params=params,
             timeout=15,
         )
         if r.status_code != 200:
@@ -1171,6 +1243,19 @@ class PlacesPlugin(Plugin):
             + '&'.join(marker_params)
             + f'&key={self.api_key}'
         )
+        logging.info(
+            'Google Static Maps request params=%s',
+            json.dumps(
+                {
+                    'url': STATIC_MAP_URL,
+                    'size': size,
+                    'markers': marker_params,
+                    'key': '<redacted>',
+                    'timeout': 15,
+                },
+                ensure_ascii=False,
+            ),
+        )
         try:
             r = requests.get(static_map_url, timeout=15)
             content_type = (r.headers.get('content-type') or '').lower()
@@ -1219,6 +1304,17 @@ class PlacesPlugin(Plugin):
             prefix = 'optimize:true|' if optimize_waypoints else ''
             params['waypoints'] = prefix + '|'.join(clean_waypoints)
 
+        logging.info(
+            'Google Directions request params=%s',
+            json.dumps(
+                {
+                    'url': DIRECTIONS_URL,
+                    'params': {**params, 'key': '<redacted>'},
+                    'timeout': 15,
+                },
+                ensure_ascii=False,
+            ),
+        )
         r = requests.get(DIRECTIONS_URL, params=params, timeout=15)
         data = r.json()
         if data.get('status') != 'OK':

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import datetime
+import json
 import logging
 import base64
 import io
@@ -100,6 +101,7 @@ class GoogleAIHelper:
                 stream=stream,
             )
 
+            self.__log_google_request('interactions.create.chat', **interaction_args)
             response = await self.client.aio.interactions.create(**interaction_args)
 
             logging.info(f'[SEND] Response received: type={type(response).__name__}')
@@ -115,6 +117,53 @@ class GoogleAIHelper:
             {"type": "url_context"},
             {"type": "code_execution"},
         ]
+
+    def __log_google_request(self, label: str, **params) -> None:
+        logging.info(
+            '[GOOGLE REQUEST] %s params=%s',
+            label,
+            json.dumps(self.__sanitize_google_log_value(params), ensure_ascii=False, default=str),
+        )
+
+    def __sanitize_google_log_value(self, value):
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+
+        if isinstance(value, str):
+            if len(value) > 4000:
+                return {
+                    'type': 'str',
+                    'length': len(value),
+                    'preview': value[:1000],
+                }
+            return value
+
+        if isinstance(value, bytes):
+            return {
+                'type': 'bytes',
+                'length': len(value),
+            }
+
+        if isinstance(value, dict):
+            sanitized = {}
+            for key, item in value.items():
+                if key in ('data', 'image_bytes') and isinstance(item, (str, bytes)):
+                    sanitized[key] = {
+                        'type': type(item).__name__,
+                        'length': len(item),
+                    }
+                else:
+                    sanitized[key] = self.__sanitize_google_log_value(item)
+            return sanitized
+
+        if isinstance(value, (list, tuple)):
+            return [self.__sanitize_google_log_value(item) for item in value]
+
+        model_dump = getattr(value, 'model_dump', None)
+        if callable(model_dump):
+            return self.__sanitize_google_log_value(model_dump(exclude_none=True))
+
+        return repr(value)
 
     async def __process_nonstreaming_response(self, response, chat_id: int) -> str | Dict:
         answer, has_grounding = self.__extract_interaction_output(response)
@@ -268,6 +317,7 @@ class GoogleAIHelper:
                 stream=stream,
             )
 
+            self.__log_google_request('interactions.create.vision', **interaction_args)
             response = await self.client.aio.interactions.create(**interaction_args)
 
             logging.info(f'[VISION] Response received: type={type(response).__name__}')
@@ -309,12 +359,24 @@ class GoogleAIHelper:
             )
 
             if stream:
+                self.__log_google_request(
+                    'models.generate_content_stream.legacy_vision',
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
                 response = await self.client.aio.models.generate_content_stream(
                     model=model,
                     contents=contents,
                     config=config
                 )
             else:
+                self.__log_google_request(
+                    'models.generate_content.legacy_vision',
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
                 response = await self.client.aio.models.generate_content(
                     model=model,
                     contents=contents,
@@ -352,13 +414,74 @@ class GoogleAIHelper:
 
         for output in outputs:
             output_type = getattr(output, 'type', '')
-            if output_type == 'text' and getattr(output, 'text', None):
-                text_parts.append(output.text)
-            elif output_type == 'image' and getattr(output, 'data', None):
+            if output_type == 'image' and getattr(output, 'data', None):
                 return self.__direct_result_from_base64_image(output.data, getattr(output, 'mime_type', 'image/png')), False
+            text_parts.extend(self.__extract_text_parts(output))
 
         answer = "\n".join(part for part in text_parts if part).strip()
+        if not answer:
+            logging.warning(
+                '[INTERACTION] No text extracted from outputs: %s',
+                self.__describe_interaction_outputs(outputs)
+            )
         return answer, self.__interaction_used_grounding(interaction)
+
+    def __extract_text_parts(self, value) -> list[str]:
+        if value is None:
+            return []
+
+        if isinstance(value, str):
+            return [value] if value else []
+
+        if isinstance(value, dict):
+            value_type = value.get('type')
+            if value_type == 'thought':
+                return []
+            parts = []
+            text = value.get('text')
+            if isinstance(text, str) and text:
+                parts.append(text)
+            for nested_key in ('content', 'contents', 'parts', 'output', 'outputs'):
+                nested = value.get(nested_key)
+                if nested is not None:
+                    parts.extend(self.__extract_text_parts(nested))
+            return parts
+
+        if isinstance(value, (list, tuple)):
+            parts = []
+            for item in value:
+                parts.extend(self.__extract_text_parts(item))
+            return parts
+
+        value_type = getattr(value, 'type', None)
+        if value_type == 'thought':
+            return []
+
+        parts = []
+        text = getattr(value, 'text', None)
+        if isinstance(text, str) and text:
+            parts.append(text)
+
+        for nested_attr in ('content', 'contents', 'parts', 'output', 'outputs'):
+            nested = getattr(value, nested_attr, None)
+            if nested is not None:
+                parts.extend(self.__extract_text_parts(nested))
+
+        return parts
+
+    def __describe_interaction_outputs(self, outputs) -> list[dict]:
+        descriptions = []
+        for output in outputs:
+            descriptions.append({
+                'class': type(output).__name__,
+                'type': getattr(output, 'type', None),
+                'has_text': bool(getattr(output, 'text', None)),
+                'attrs': sorted(
+                    name for name in ('text', 'content', 'contents', 'parts', 'output', 'outputs', 'data')
+                    if getattr(output, name, None) is not None
+                ),
+            })
+        return descriptions
 
     def __interaction_used_grounding(self, interaction) -> bool:
         outputs = getattr(interaction, 'outputs', None) or []
@@ -477,12 +600,19 @@ class GoogleAIHelper:
             if image_model.startswith('gemini'):
                 # Use generate_content with response_modalities for Gemini image models
                 logging.info(f'[IMAGE] Using Gemini image model: {image_model}')
+                image_config = types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"]
+                )
+                self.__log_google_request(
+                    'models.generate_content.image',
+                    model=image_model,
+                    contents=[prompt],
+                    config=image_config,
+                )
                 response = await self.client.aio.models.generate_content(
                     model=image_model,
                     contents=[prompt],
-                    config=types.GenerateContentConfig(
-                        response_modalities=["TEXT", "IMAGE"]
-                    )
+                    config=image_config
                 )
                 
                 # Extract image from response
@@ -516,12 +646,19 @@ class GoogleAIHelper:
             else:
                 # Use generate_images for Imagen models
                 logging.info(f'[IMAGE] Using Imagen model: {image_model}')
+                image_config = types.GenerateImagesConfig(
+                    number_of_images=1,
+                )
+                self.__log_google_request(
+                    'models.generate_images.image',
+                    model=image_model,
+                    prompt=prompt,
+                    config=image_config,
+                )
                 response = await self.client.aio.models.generate_images(
                     model=image_model,
                     prompt=prompt,
-                    config=types.GenerateImagesConfig(
-                        number_of_images=1,
-                    )
+                    config=image_config
                 )
 
                 if not response.generated_images or len(response.generated_images) == 0:
@@ -575,20 +712,29 @@ class GoogleAIHelper:
             contents = text
             if tts_prompt:
                 contents = f'{tts_prompt}: {text}'
+
+            tts_model = self.config.get('tts_model', 'gemini-2.5-flash-preview-tts')
+            tts_config = types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=self.config.get('tts_voice', 'Kore'),
+                        )
+                    )
+                ),
+            )
+            self.__log_google_request(
+                'models.generate_content.tts',
+                model=tts_model,
+                contents=contents,
+                config=tts_config,
+            )
             
             response = await self.client.aio.models.generate_content(
-                model=self.config.get('tts_model', 'gemini-2.5-flash-preview-tts'),
+                model=tts_model,
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=self.config.get('tts_voice', 'Kore'),
-                            )
-                        )
-                    ),
-                )
+                config=tts_config
             )
 
             if not response.candidates or len(response.candidates) == 0:
@@ -689,17 +835,25 @@ class GoogleAIHelper:
                 transcription_prompt += prompt
             elif 'whisper_prompt' in self.config and self.config['whisper_prompt']:
                 transcription_prompt += self.config['whisper_prompt']
+
+            transcription_model = self.config.get('transcription_model', 'gemini-2.5-flash')
+            transcription_contents = [
+                transcription_prompt,
+                types.Part.from_bytes(
+                    data=audio_bytes,
+                    mime_type=mime_type,
+                )
+            ]
+            self.__log_google_request(
+                'models.generate_content.transcription',
+                model=transcription_model,
+                contents=transcription_contents,
+            )
             
             # Send transcription request
             response = await self.client.aio.models.generate_content(
-                model=self.config.get('transcription_model', 'gemini-2.5-flash'),
-                contents=[
-                    transcription_prompt,
-                    types.Part.from_bytes(
-                        data=audio_bytes,
-                        mime_type=mime_type,
-                    )
-                ]
+                model=transcription_model,
+                contents=transcription_contents
             )
             
             if not response.candidates or len(response.candidates) == 0:
