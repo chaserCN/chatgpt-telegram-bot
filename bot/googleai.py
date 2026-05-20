@@ -410,6 +410,7 @@ class GoogleAIHelper:
 
     def __extract_interaction_output(self, interaction) -> tuple[str | Dict, bool]:
         outputs = getattr(interaction, 'outputs', None) or []
+        steps = getattr(interaction, 'steps', None) or []
         text_parts = []
 
         for output in outputs:
@@ -418,11 +419,16 @@ class GoogleAIHelper:
                 return self.__direct_result_from_base64_image(output.data, getattr(output, 'mime_type', 'image/png')), False
             text_parts.extend(self.__extract_text_parts(output))
 
+        if not text_parts:
+            for step in steps:
+                text_parts.extend(self.__extract_text_parts(step))
+
         answer = "\n".join(part for part in text_parts if part).strip()
         if not answer:
             logging.warning(
-                '[INTERACTION] No text extracted from outputs: %s',
-                self.__describe_interaction_outputs(outputs)
+                '[INTERACTION] No text extracted from interaction: outputs=%s steps=%s',
+                self.__describe_interaction_items(outputs),
+                self.__describe_interaction_items(steps),
             )
         return answer, self.__interaction_used_grounding(interaction)
 
@@ -441,7 +447,7 @@ class GoogleAIHelper:
             text = value.get('text')
             if isinstance(text, str) and text:
                 parts.append(text)
-            for nested_key in ('content', 'contents', 'parts', 'output', 'outputs'):
+            for nested_key in ('content', 'contents', 'parts', 'output', 'outputs', 'steps'):
                 nested = value.get(nested_key)
                 if nested is not None:
                     parts.extend(self.__extract_text_parts(nested))
@@ -462,31 +468,31 @@ class GoogleAIHelper:
         if isinstance(text, str) and text:
             parts.append(text)
 
-        for nested_attr in ('content', 'contents', 'parts', 'output', 'outputs'):
+        for nested_attr in ('content', 'contents', 'parts', 'output', 'outputs', 'steps'):
             nested = getattr(value, nested_attr, None)
             if nested is not None:
                 parts.extend(self.__extract_text_parts(nested))
 
         return parts
 
-    def __describe_interaction_outputs(self, outputs) -> list[dict]:
+    def __describe_interaction_items(self, items) -> list[dict]:
         descriptions = []
-        for output in outputs:
+        for item in items:
             descriptions.append({
-                'class': type(output).__name__,
-                'type': getattr(output, 'type', None),
-                'has_text': bool(getattr(output, 'text', None)),
+                'class': type(item).__name__,
+                'type': getattr(item, 'type', None),
+                'has_text': bool(getattr(item, 'text', None)),
                 'attrs': sorted(
-                    name for name in ('text', 'content', 'contents', 'parts', 'output', 'outputs', 'data')
-                    if getattr(output, name, None) is not None
+                    name for name in ('text', 'content', 'contents', 'parts', 'output', 'outputs', 'steps', 'data')
+                    if getattr(item, name, None) is not None
                 ),
             })
         return descriptions
 
     def __interaction_used_grounding(self, interaction) -> bool:
-        outputs = getattr(interaction, 'outputs', None) or []
-        for output in outputs:
-            output_type = getattr(output, 'type', '')
+        items = (getattr(interaction, 'outputs', None) or []) + (getattr(interaction, 'steps', None) or [])
+        for item in items:
+            output_type = getattr(item, 'type', '')
             if 'search' in output_type or 'ground' in output_type or 'url_context' in output_type:
                 return True
         return False
